@@ -1,0 +1,20 @@
+.message-status {
+  display: flex;
+  align-items: center;
+  margin-left: 4px;
+  opacity: 0.8;
+  height: 14px;
+}
+
+.message-status svg {
+  display: block;
+}
+
+.message-status .read-icon {
+  color: #60a5fa; /* blue-400 */
+}
+
+/* Dark mode overrides */
+.dark .message-status .read-icon {
+  color: #93c5fd; /* blue-300 */
+}

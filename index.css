@@ -1,0 +1,176 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Safe area support */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* --- ANIMATIONS --- */
+
+/* 1. Message Appearance (Slide Up + Fade) */
+@keyframes slideUpFade {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-message {
+  animation: slideUpFade 0.4s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+}
+
+/* 2. Button Press Effect (Tactile feedback) */
+.btn-press {
+  @apply transition-transform duration-150 active:scale-95 cursor-pointer;
+}
+
+.btn-icon-hover {
+  @apply transition-all duration-200 hover:bg-black/5 dark:hover:bg-white/10 rounded-full;
+}
+
+/* 3. Pop In (Generic) */
+@keyframes springScale {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(5px);
+  }
+  60% {
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-pop-in {
+  animation: springScale 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* 4. Modal Spring (Settings, Create Chat) */
+@keyframes modalSpring {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(15px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-modal {
+  animation: modalSpring 0.5s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+}
+
+/* 5. Dropdown Enter (Menus) */
+@keyframes dropdownEnter {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-dropdown {
+  animation: dropdownEnter 0.3s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+}
+
+/* 6. Slide Panel (Profile Info) */
+@keyframes slideInPanel {
+  0% {
+    opacity: 0.5;
+    transform: translateX(100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-panel {
+  animation: slideInPanel 0.5s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+}
+
+/* 7. View Transition (Inside Settings) */
+@keyframes viewSlide {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-view-transition {
+  animation: viewSlide 0.3s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+}
+
+/* 8. Smooth Fade In */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* 9. Input Focus Ring Animation */
+.input-transition {
+  @apply transition-all duration-200 ease-out;
+}
+.input-transition:focus-within {
+  @apply transform scale-[1.01];
+}
+
+/* 10. Sidebar Item Hover */
+.contact-item {
+  @apply transition-all duration-200;
+}
+.contact-item:hover {
+  @apply transform scale-[1.01];
+}
+
+/* Utility to ensure clicks go through decorative overlays */
+.pointer-events-none {
+  pointer-events: none;
+}

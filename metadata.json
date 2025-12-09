@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Alpha 1.2 Zenchat",
+  "description": "Минималистичный мессенджер в стиле Telegram, работающий на базе Gemini. Наслаждайтесь общением без отвлекающих факторов.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
