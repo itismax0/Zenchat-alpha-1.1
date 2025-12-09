@@ -21,9 +21,7 @@
     "socket.io": "^4.7.4",
     "socket.io-client": "^4.7.4",
     "cors": "^2.8.5",
-    "mongoose": "^8.2.0"
-  },
-  "devDependencies": {
+    "mongoose": "^8.2.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
