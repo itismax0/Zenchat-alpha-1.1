@@ -124,17 +124,17 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           )}
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Email</label>
+            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Email или имя пользователя</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Mail size={18} className="text-gray-400" />
               </div>
               <input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl text-slate-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                placeholder="name@example.com"
+                placeholder="Email или имя пользователя"
                 required
                 disabled={isLoading}
               />
