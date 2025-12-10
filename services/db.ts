@@ -132,7 +132,7 @@ export const db = {
                             // Merge strategy: Trust server for profile info, trust local for recent state if newer
                             contactMap.set(sanitized.id, {
                                 ...local,
-                                ...sanitized, // Server overwrites name/avatar
+                                ...sanitized, // Server overwrites name/avatar/username
                                 // Keep local transient state if it looks newer (e.g. unread count pending sync)
                                 unreadCount: Math.max(local.unreadCount || 0, sanitized.unreadCount || 0),
                                 lastMessageTime: Math.max(local.lastMessageTime || 0, sanitized.lastMessageTime || 0),
@@ -221,15 +221,21 @@ export const db = {
 
         if (!c.id) return null;
 
+        // CRITICAL FIX: Ensure optional fields like username are preserved!
         return {
             ...c,
+            id: c.id,
             name: c.name || 'Unknown User', 
             avatarUrl: c.avatarUrl || '',
             unreadCount: typeof c.unreadCount === 'number' ? c.unreadCount : 0,
             isOnline: !!c.isOnline,
             type: c.type || 'user',
             lastMessage: c.lastMessage || '',
-            lastMessageTime: c.lastMessageTime || Date.now()
+            lastMessageTime: c.lastMessageTime || Date.now(),
+            username: c.username || undefined, // WAS MISSING
+            bio: c.bio || undefined,           // WAS MISSING
+            phoneNumber: c.phoneNumber || undefined, // WAS MISSING
+            description: c.description || undefined
         };
     },
 

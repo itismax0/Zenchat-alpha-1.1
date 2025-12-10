@@ -261,7 +261,7 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
         const { id } = req.params;
         if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
         
-        // SECURITY FIX: Whitelist Allowed Fields (Prevents Mass Assignment/Overposting)
+        // SECURITY FIX: Whitelist Allowed Fields
         const allowedFields = [
             'name', 'username', 'bio', 'phoneNumber', 'address', 'birthDate', 
             'avatarUrl', 'statusEmoji', 'profileColor', 'profileBackgroundEmoji'
@@ -272,24 +272,22 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
 
         Object.keys(req.body).forEach(key => {
             if (allowedFields.includes(key)) {
-                updates[key] = req.body[key];
+                // Special check for username empty string -> remove
+                if (key === 'username') {
+                     const val = req.body[key];
+                     if (val === '' || val === null) {
+                         unsetUpdates.username = 1;
+                     } else {
+                         const usernameRegex = /^[a-zA-Z0-9_]{3,25}$/;
+                         if (!usernameRegex.test(val)) return; // Skip invalid
+                         updates.username = val;
+                     }
+                } else {
+                    updates[key] = req.body[key];
+                }
             }
         });
         
-        // Handle Username
-        // Logic: 
-        // - If empty string or null, use $unset to remove it (for sparse unique index support)
-        // - If valid string, validate regex and use $set
-        if (updates.username === '' || updates.username === null) {
-            delete updates.username; // Remove from $set payload
-            unsetUpdates.username = 1; // Add to $unset payload
-        } else if (updates.username) {
-             const usernameRegex = /^[a-zA-Z0-9_]{3,25}$/;
-             if (!usernameRegex.test(updates.username)) {
-                 return res.status(400).json({ error: 'Invalid username format' });
-             }
-        }
-
         // Construct update operation
         const updateOp = {};
         if (Object.keys(updates).length > 0) updateOp.$set = updates;
@@ -312,7 +310,7 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
         // Notify friends about profile update
         const friends = await User.find({ "contacts.id": id }).select('id');
         friends.forEach(friend => {
-             req.io.to(friend.id).emit('contact_update', { id: user.id, ...updates, ...unsetUpdates }); // Send unsets as update too
+             req.io.to(friend.id).emit('contact_update', { id: user.id, ...updates, ...unsetUpdates }); 
         });
         
         const { password: _, _id, __v, ...userProfile } = user.toObject();
@@ -320,7 +318,7 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
     } catch (e) { 
         // Handle Duplicate Key Error (Username taken)
         if (e.code === 11000) {
-            return res.status(400).json({ error: 'Username is already taken' });
+            return res.status(400).json({ error: 'Это имя пользователя уже занято' });
         }
         console.error("Update profile error:", e);
         res.status(500).json({ error: 'Update failed' }); 
@@ -431,6 +429,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
 
         for (let contact of user.contacts) {
             if (contact.type === 'user' && contact.id !== 'saved-messages' && contact.id !== 'gemini-ai') {
+                // Ensure we send back the username and bio
                 const contactProfile = await User.findOne({ id: contact.id }).select('name avatarUrl bio username phoneNumber address birthDate statusEmoji profileColor profileBackgroundEmoji');
                 if (contactProfile) {
                     const isOnline = userSocketMap.has(contact.id);
@@ -439,7 +438,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
                         name: contactProfile.name,
                         avatarUrl: contactProfile.avatarUrl,
                         bio: contactProfile.bio,
-                        username: contactProfile.username,
+                        username: contactProfile.username, // CRITICAL FOR SEARCH
                         phoneNumber: contactProfile.phoneNumber,
                         address: contactProfile.address,
                         birthDate: contactProfile.birthDate,
@@ -465,7 +464,6 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
         const fullHistory = { ...user.chatHistory };
         groups.forEach(g => { fullHistory[g.id] = g.chatHistory; });
 
-        // VULNERABILITY FIX 5: Sanitize Sync Response
         res.json({
             profile: { id: user.id, name: user.name, email: user.email, username: user.username, avatarUrl: user.avatarUrl, blockedUsers: user.blockedUsers },
             contacts: [...hydratedContacts, ...groupContacts],
@@ -500,7 +498,7 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
                 { email: regex }
             ]
         })
-        .select('id name username avatarUrl bio')
+        .select('id name username avatarUrl bio') // Ensure username is selected
         .limit(20);
         
         res.json(users);

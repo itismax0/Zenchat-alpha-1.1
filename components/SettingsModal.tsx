@@ -101,10 +101,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleSaveProfile = async () => {
+      const cleanUsername = editUsername.trim();
+
       // Basic Client-Side Validation
-      if (editUsername) {
+      if (cleanUsername) {
           const usernameRegex = /^[a-zA-Z0-9_]{3,25}$/;
-          if (!usernameRegex.test(editUsername)) {
+          if (!usernameRegex.test(cleanUsername)) {
               setSaveError('Юзернейм: 3-25 символов (латиница, цифры, _).');
               return;
           }
@@ -113,10 +115,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsSaving(true);
       setSaveError('');
       
-      // SECURITY FIX: Do not spread ...userProfile to avoid sending chatHistory/contacts to server
       const updates: any = {};
       
-      // Only include fields that are actually managed by this form
       updates.name = editName;
       updates.bio = editBio;
       updates.phoneNumber = editPhone;
@@ -126,16 +126,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       updates.profileColor = profileColor;
       updates.profileBackgroundEmoji = profileBackgroundEmoji;
       
-      // FIX: Handle Username Deletion
-      // If editUsername is empty string, we send NULL so server deletes it.
-      // If it has value, we send value.
-      updates.username = editUsername.trim() || null;
+      // If valid, send it. If empty string, send "" which server converts to unset
+      updates.username = cleanUsername;
 
       try {
           await onUpdateProfile(updates);
           setView('main');
       } catch (e: any) {
-          setSaveError(e.message || 'Ошибка сохранения');
+          console.error("Save error", e);
+          setSaveError(e.message || 'Ошибка сохранения. Возможно, юзернейм занят.');
       } finally {
           setIsSaving(false);
       }
