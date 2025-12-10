@@ -40,12 +40,20 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!c) return false;
     const term = searchTerm.toLowerCase().trim();
     if (!term) return true;
-    if (c.name?.toLowerCase().includes(term)) return true;
+    
+    // SAFEGUARDS
+    const name = c.name || '';
+    const username = c.username || '';
+    const bio = c.bio || '';
+    const desc = c.description || '';
+    const phone = c.phoneNumber || '';
+
+    if (name.toLowerCase().includes(term)) return true;
     const cleanTerm = term.replace('@', '');
-    if (c.username?.toLowerCase().includes(cleanTerm)) return true;
-    if (c.bio?.toLowerCase().includes(term)) return true;
-    if (c.description?.toLowerCase().includes(term)) return true;
-    if (c.phoneNumber?.includes(term)) return true;
+    if (username.toLowerCase().includes(cleanTerm)) return true;
+    if (bio.toLowerCase().includes(term)) return true;
+    if (desc.toLowerCase().includes(term)) return true;
+    if (phone.includes(term)) return true;
     return false;
   });
 

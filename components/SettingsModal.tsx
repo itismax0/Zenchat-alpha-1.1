@@ -93,7 +93,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       const reader = new FileReader();
       reader.onload = async (ev) => {
         const newUrl = ev.target?.result as string;
-        await onUpdateProfile({ ...userProfile, avatarUrl: newUrl });
+        // SECURITY: Only send avatarUrl, not full profile
+        await onUpdateProfile({ avatarUrl: newUrl } as any);
       };
       reader.readAsDataURL(file);
     }
@@ -111,19 +112,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
       setIsSaving(true);
       setSaveError('');
+      
+      // SECURITY FIX: Do not spread ...userProfile to avoid sending chatHistory/contacts to server
+      const updates: any = {};
+      
+      // Only include fields that are actually managed by this form
+      updates.name = editName;
+      updates.bio = editBio;
+      updates.phoneNumber = editPhone;
+      updates.address = editAddress;
+      updates.birthDate = editBirthDate;
+      updates.statusEmoji = statusEmoji;
+      updates.profileColor = profileColor;
+      updates.profileBackgroundEmoji = profileBackgroundEmoji;
+      
+      // FIX: Handle Username Deletion
+      // If editUsername is empty string, we send NULL so server deletes it.
+      // If it has value, we send value.
+      updates.username = editUsername.trim() || null;
+
       try {
-          await onUpdateProfile({
-              ...userProfile,
-              name: editName,
-              username: editUsername,
-              bio: editBio,
-              phoneNumber: editPhone,
-              address: editAddress,
-              birthDate: editBirthDate,
-              statusEmoji,
-              profileColor,
-              profileBackgroundEmoji
-          });
+          await onUpdateProfile(updates);
           setView('main');
       } catch (e: any) {
           setSaveError(e.message || 'Ошибка сохранения');
@@ -596,8 +605,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 className="w-full accent-blue-500 h-2 bg-gray-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                             />
                         </div>
-                        
-                        {/* Background selector removed as per requirement */}
                     </div>
                 </div>
             </div>

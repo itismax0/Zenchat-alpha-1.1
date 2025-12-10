@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
 import { CURRENT_USER_ID } from '../constants';
 import ReactMarkdown from 'react-markdown';
-import { FileText, Download, MapPin, Play, Pause, Check, CheckCheck, Clock, Pin, Edit2, Forward, User, UserPlus, Lock } from 'lucide-react';
+import { FileText, Download, MapPin, Play, Pause, Check, CheckCheck, Clock, Pin, Edit2, Forward, User, UserPlus, Lock, AlertCircle } from 'lucide-react';
 import './MessageBubble.css';
 import Avatar from './Avatar';
 
@@ -103,6 +103,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     return (
       <span className="message-status flex items-center ml-1 h-3 self-end mb-0.5" title={message.status}>
         {message.isPinned && <Pin size={10} className="mr-1.5 text-slate-300 transform -rotate-45" fill="currentColor" />}
+        {message.status === 'error' && <AlertCircle size={14} className="text-red-300 dark:text-red-400" />}
         {message.status === 'sending' && !isOnline && <Clock size={12} className={`${iconClass} opacity-70`} strokeWidth={2} />}
         {((message.status === 'sending' && isOnline) || message.status === 'sent') && <Check size={16} className={iconClass} strokeWidth={2} />}
         {message.status === 'read' && <CheckCheck size={16} className={iconClass} strokeWidth={2} />}

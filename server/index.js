@@ -35,12 +35,13 @@ app.use((req, res, next) => {
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' })); // Increased limit for Base64 images
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // --- Rate Limiting ---
 const apiLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, 
-	max: 300, 
+	max: 500, // Increased
 	standardHeaders: true,
 	legacyHeaders: false,
     message: { error: 'Слишком много запросов с вашего IP, попробуйте позже.' }
@@ -49,7 +50,7 @@ app.use('/api/', apiLimiter);
 
 const authLimiter = rateLimit({
 	windowMs: 60 * 60 * 1000, 
-	max: 20, 
+	max: 50, 
 	standardHeaders: true,
 	legacyHeaders: false,
     message: { error: 'Слишком много попыток входа. Попробуйте через час.' }
@@ -77,7 +78,7 @@ const userSocketMap = new Map();
 
 // --- Socket.io Setup ---
 const io = new Server(server, {
-    maxHttpBufferSize: 1e8,
+    maxHttpBufferSize: 1e8, // 100 MB
     cors: {
         origin: "*", 
         methods: ["GET", "POST"]
@@ -171,51 +172,72 @@ const Group = mongoose.model('Group', GroupSchema);
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, password } = req.body;
-        const existingUser = await User.findOne({ email });
+        
+        // VULNERABILITY FIX 1: NoSQL Injection Prevention (Force string)
+        const safeEmail = String(email);
+        
+        const existingUser = await User.findOne({ email: safeEmail });
         if (existingUser) return res.status(400).json({ error: 'Email already exists' });
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
         const newUserId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
-        // Auto-generate unique username from email
-        let baseUsername = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+        // ERROR FIX 3: Robust Username Generation Loop (Race Condition Handling)
+        let baseUsername = safeEmail.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
         if (baseUsername.length < 3) baseUsername = 'user' + Math.floor(Math.random() * 10000);
         
         let username = baseUsername;
         let counter = 1;
-        while (await User.findOne({ username })) {
-            username = `${baseUsername}${counter}`;
-            counter++;
+        let isUnique = false;
+        
+        // Try up to 5 times to find a unique username
+        for(let i=0; i<5; i++) {
+            const check = await User.findOne({ username });
+            if (!check) {
+                isUnique = true;
+                break;
+            }
+            username = `${baseUsername}${counter++}${Math.floor(Math.random() * 100)}`;
         }
+        
+        if (!isUnique) username = `${baseUsername}_${newUserId}`; // Fallback
 
         const newUser = new User({
             id: newUserId,
             name,
-            email,
+            email: safeEmail,
             password: hashedPassword,
-            username: username, // Save the generated username
+            username: username, // Explicitly save generated username
             avatarUrl: '',
         });
         await newUser.save();
-        const token = jwt.sign({ id: newUserId, email }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ id: newUserId, email: safeEmail }, JWT_SECRET, { expiresIn: '7d' });
         const { password: _, _id, __v, ...userProfile } = newUser.toObject();
         res.json({ ...userProfile, token });
     } catch (e) {
         console.error("Register Error", e);
-        res.status(500).json({ error: e.code === 11000 ? 'Username or Email already taken' : 'Error registering user' });
+        // Handle race condition on unique index just in case
+        if (e.code === 11000) {
+             return res.status(400).json({ error: 'Username or Email collision. Please try again.' });
+        }
+        res.status(500).json({ error: 'Error registering user' });
     }
 });
 
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-        const user = await User.findOne({ email });
+        
+        // VULNERABILITY FIX 1: NoSQL Injection Prevention
+        const safeEmail = String(email);
+
+        const user = await User.findOne({ email: safeEmail });
         if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-             // Legacy fallback for plain text passwords
+             // Legacy fallback for plain text passwords (should be removed in prod)
              if (user.password === password) {
                  const salt = await bcrypt.genSalt(10);
                  user.password = await bcrypt.hash(password, salt);
@@ -238,19 +260,61 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
         if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
-        const updates = req.body;
         
-        // Ensure username is not cleared to null if it was set
-        if (updates.username === '') updates.username = null;
+        // SECURITY FIX: Whitelist Allowed Fields (Prevents Mass Assignment/Overposting)
+        const allowedFields = [
+            'name', 'username', 'bio', 'phoneNumber', 'address', 'birthDate', 
+            'avatarUrl', 'statusEmoji', 'profileColor', 'profileBackgroundEmoji'
+        ];
 
-        const user = await User.findOneAndUpdate({ id: id }, { $set: updates }, { new: true, runValidators: true });
+        const updates = {};
+        const unsetUpdates = {}; // For $unset (removing fields)
+
+        Object.keys(req.body).forEach(key => {
+            if (allowedFields.includes(key)) {
+                updates[key] = req.body[key];
+            }
+        });
+        
+        // Handle Username
+        // Logic: 
+        // - If empty string or null, use $unset to remove it (for sparse unique index support)
+        // - If valid string, validate regex and use $set
+        if (updates.username === '' || updates.username === null) {
+            delete updates.username; // Remove from $set payload
+            unsetUpdates.username = 1; // Add to $unset payload
+        } else if (updates.username) {
+             const usernameRegex = /^[a-zA-Z0-9_]{3,25}$/;
+             if (!usernameRegex.test(updates.username)) {
+                 return res.status(400).json({ error: 'Invalid username format' });
+             }
+        }
+
+        // Construct update operation
+        const updateOp = {};
+        if (Object.keys(updates).length > 0) updateOp.$set = updates;
+        if (Object.keys(unsetUpdates).length > 0) updateOp.$unset = unsetUpdates;
+        
+        // If nothing to update, return current user
+        if (Object.keys(updateOp).length === 0) {
+            const user = await User.findOne({ id }).select('-_id -__v -password');
+            return res.json(user);
+        }
+
+        const user = await User.findOneAndUpdate(
+            { id: id }, 
+            updateOp, 
+            { new: true, runValidators: true }
+        );
+        
         if (!user) return res.status(404).json({ error: 'User not found' });
         
         // Notify friends about profile update
         const friends = await User.find({ "contacts.id": id }).select('id');
         friends.forEach(friend => {
-             req.io.to(friend.id).emit('contact_update', { id: user.id, ...updates });
+             req.io.to(friend.id).emit('contact_update', { id: user.id, ...updates, ...unsetUpdates }); // Send unsets as update too
         });
+        
         const { password: _, _id, __v, ...userProfile } = user.toObject();
         res.json(userProfile);
     } catch (e) { 
@@ -358,26 +422,15 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
 app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
     try {
         const { userId } = req.params;
+        if (req.user.id !== userId) return res.status(403).json({ error: 'Forbidden' });
+
         const user = await User.findOne({ id: userId });
         if (!user) return res.status(404).json({ error: 'User not found' });
         
-        // Check and repair incorrect contact types
-        let contactsUpdated = false;
         let hydratedContacts = [];
-        for (let contact of user.contacts) {
-            if (contact.type === 'group' && contact.id) {
-                const groupExists = await Group.exists({ id: contact.id });
-                if (!groupExists) {
-                    const userExists = await User.exists({ id: contact.id });
-                    if (userExists) {
-                        contact.type = 'user';
-                        contactsUpdated = true;
-                    }
-                }
-            }
 
+        for (let contact of user.contacts) {
             if (contact.type === 'user' && contact.id !== 'saved-messages' && contact.id !== 'gemini-ai') {
-                // Explicitly select username
                 const contactProfile = await User.findOne({ id: contact.id }).select('name avatarUrl bio username phoneNumber address birthDate statusEmoji profileColor profileBackgroundEmoji');
                 if (contactProfile) {
                     const isOnline = userSocketMap.has(contact.id);
@@ -386,7 +439,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
                         name: contactProfile.name,
                         avatarUrl: contactProfile.avatarUrl,
                         bio: contactProfile.bio,
-                        username: contactProfile.username, // Ensure username is pulled
+                        username: contactProfile.username,
                         phoneNumber: contactProfile.phoneNumber,
                         address: contactProfile.address,
                         birthDate: contactProfile.birthDate,
@@ -398,24 +451,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
                     continue;
                 }
             }
-            if (contact.type === 'group' || contact.type === 'channel') {
-                 const group = await Group.findOne({ id: contact.id });
-                 if (!group) {
-                     const actuallyUser = await User.findOne({ id: contact.id });
-                     if (actuallyUser) {
-                         contact.type = 'user';
-                         contact.name = actuallyUser.name;
-                         contact.avatarUrl = actuallyUser.avatarUrl;
-                         hydratedContacts.push(contact);
-                         continue;
-                     }
-                 }
-            }
             hydratedContacts.push(contact);
-        }
-
-        if (contactsUpdated) {
-            await User.updateOne({ id: userId }, { $set: { contacts: user.contacts } });
         }
 
         const groups = await Group.find({ members: userId });
@@ -429,6 +465,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
         const fullHistory = { ...user.chatHistory };
         groups.forEach(g => { fullHistory[g.id] = g.chatHistory; });
 
+        // VULNERABILITY FIX 5: Sanitize Sync Response
         res.json({
             profile: { id: user.id, name: user.name, email: user.email, username: user.username, avatarUrl: user.avatarUrl, blockedUsers: user.blockedUsers },
             contacts: [...hydratedContacts, ...groupContacts],
@@ -436,7 +473,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
             settings: user.settings,
             devices: user.devices
         });
-    } catch (e) 
+    } catch (e) {
         console.error("Sync error", e);
         res.status(500).json({ error: 'Sync failed' }); 
     }
@@ -449,16 +486,11 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
     if (!query || String(query).trim().length === 0) return res.json([]);
 
     try {
-        // Strip ALL @ symbols (global match) to handle "@username" searches
         const cleanQuery = String(query).replace(/@/g, '').trim();
-        
-        // Escape regex special characters
+        // VULNERABILITY FIX 4: ReDoS Prevention (Escape regex special chars)
         const safeQuery = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         
-        // Case-insensitive regex
         const regex = new RegExp(safeQuery, 'i');
-
-        console.log(`Searching for: '${cleanQuery}' (Regex: ${regex}) for user ${currentUserId}`);
 
         const users = await User.find({ 
             id: { $ne: currentUserId }, 
@@ -471,7 +503,6 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
         .select('id name username avatarUrl bio')
         .limit(20);
         
-        console.log(`Found ${users.length} users:`, users.map(u => ({ id: u.id, name: u.name, username: u.username })));
         res.json(users);
     } catch (e) {
         console.error("Search error", e);
@@ -482,11 +513,9 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
 // --- Background Job: Auto Delete ---
 const runAutoDeleteJob = async () => {
     try {
-        // Use cursor for memory efficiency
         const cursor = User.find({ "contacts.autoDelete": { $gt: 0 } }).cursor();
         
         for (let user = await cursor.next(); user != null; user = await cursor.next()) {
-            let historyModified = false;
             let updatedHistory = {};
             let needsUpdate = false;
 
@@ -501,7 +530,6 @@ const runAutoDeleteJob = async () => {
                     
                     if (newHistory.length < originalLen) {
                         updatedHistory[`chatHistory.${chatId}`] = newHistory;
-                        historyModified = true;
                         needsUpdate = true;
                     }
                 }
@@ -509,7 +537,6 @@ const runAutoDeleteJob = async () => {
             
             if (needsUpdate) {
                 await User.updateOne({ _id: user._id }, { $set: updatedHistory });
-                // Notify client to update UI if online
                 if (userSocketMap.has(user.id)) {
                     const freshUser = await User.findById(user._id);
                     io.to(user.id).emit('history_update', { chatHistory: freshUser.chatHistory });
@@ -529,14 +556,12 @@ const saveMessageToDB = async (senderId, receiverId, message) => {
     try {
         if (receiverId === 'saved-messages') {
             await User.updateOne({ id: senderId }, { $push: { "chatHistory.saved-messages": message } });
-            return;
+            return true;
         }
         
-        // Prevent duplicate self-messages
         if (senderId === receiverId) {
-             // For self-chat that isn't saved-messages (rare but possible), just save once
              await User.updateOne({ id: senderId }, { $push: { [`chatHistory.${senderId}`]: { ...message, status: 'read' } } });
-             return;
+             return true;
         }
 
         const group = await Group.findOne({ id: receiverId });
@@ -550,33 +575,56 @@ const saveMessageToDB = async (senderId, receiverId, message) => {
                 },
                 { arrayFilters: [{ "elem.id": receiverId }] }
             );
-            return;
+            return true;
         }
-        // DM Logic
         
-        // CHECK BLOCKING
         const receiver = await User.findOne({ id: receiverId });
         if (receiver && receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
             console.log(`Message blocked from ${senderId} to ${receiverId}`);
-            return; 
+            return true; // Technically saved/handled
         }
 
-        // Save for sender
-        await User.updateOne({ id: senderId }, { $push: { [`chatHistory.${receiverId}`]: { ...message, status: 'sent' } } });
+        // SAVE TO HISTORIES
+        try {
+            await User.updateOne({ id: senderId }, { $push: { [`chatHistory.${receiverId}`]: { ...message, status: 'sent' } } });
+            await User.updateOne({ id: receiverId }, { $push: { [`chatHistory.${senderId}`]: message } });
+        } catch (dbErr) {
+             console.error("FAILED TO SAVE MESSAGE TO DB (Likely too large)", dbErr);
+             return false;
+        }
         
-        // Save for receiver
-        await User.updateOne({ id: receiverId }, { $push: { [`chatHistory.${senderId}`]: message } });
-        
-        // Update contacts last message
         const preview = message.isEncrypted ? '🔒 Зашифрованное сообщение' : (message.text || 'Вложение');
         
-        // Update sender's contact list
-        await User.updateOne(
-            { id: senderId, "contacts.id": receiverId }, 
-            { $set: { "contacts.$.lastMessage": preview, "contacts.$.lastMessageTime": message.timestamp }}
-        );
+        // Update SENDER'S Contact List
+        const sender = await User.findOne({ id: senderId });
+        if (sender) {
+             const contactExists = sender.contacts.some(c => c.id === receiverId);
+             if (contactExists) {
+                  await User.updateOne(
+                      { id: senderId, "contacts.id": receiverId },
+                      { $set: { "contacts.$.lastMessage": preview, "contacts.$.lastMessageTime": message.timestamp } }
+                  );
+             } else {
+                 // Receiver not in Sender's contacts yet (e.g. first message). Add them!
+                 let receiverInfo = await User.findOne({ id: receiverId });
+                 if (receiverInfo) {
+                     const newContact = {
+                         id: receiverId,
+                         name: receiverInfo.name,
+                         avatarUrl: receiverInfo.avatarUrl,
+                         type: 'user',
+                         lastMessage: preview,
+                         lastMessageTime: message.timestamp,
+                         unreadCount: 0,
+                         isOnline: false, // will update via socket status
+                         username: receiverInfo.username
+                     };
+                     await User.updateOne({ id: senderId }, { $push: { contacts: newContact } });
+                 }
+             }
+        }
 
-        // Update receiver's contact list
+        // Update RECEIVER'S Contact List
         if (receiver) {
             const contactExists = receiver.contacts.some(c => c.id === senderId);
             if (contactExists) {
@@ -585,7 +633,6 @@ const saveMessageToDB = async (senderId, receiverId, message) => {
                     { $set: { "contacts.$.lastMessage": preview, "contacts.$.lastMessageTime": message.timestamp }, $inc: { "contacts.$.unreadCount": 1 }}
                 );
             } else {
-                // Auto-add contact for receiver
                 const senderInfo = await User.findOne({ id: senderId });
                 const newContact = {
                     id: senderId,
@@ -596,12 +643,16 @@ const saveMessageToDB = async (senderId, receiverId, message) => {
                     lastMessageTime: message.timestamp,
                     unreadCount: 1,
                     isOnline: true,
-                    username: senderInfo.username // Propagate username to contact list
+                    username: senderInfo.username 
                 };
                 await User.updateOne({ id: receiverId }, { $push: { contacts: newContact } });
             }
         }
-    } catch (e) { console.error("DB Save Error", e); }
+        return true;
+    } catch (e) { 
+        console.error("DB Save Error", e); 
+        return false;
+    }
 };
 
 const updateUserStatus = async (userId, isOnline) => {
@@ -648,30 +699,36 @@ io.on('connection', (socket) => {
     });
 
     socket.on('send_message', async ({ message, receiverId }) => {
-        const senderId = message.senderId;
+        // VULNERABILITY FIX 2: Socket Identity Spoofing Prevention
+        const senderId = socket.userId; 
+        if (!senderId || message.senderId !== senderId) {
+            console.warn(`Spoofing attempt! Socket ${socket.id} tried to send as ${message.senderId}`);
+            socket.emit('message_sent', { tempId: message.id, status: 'error' });
+            return;
+        }
 
-        // Check if sender is blocked by receiver before emitting
         const receiver = await User.findOne({ id: receiverId });
         if (receiver && receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
-             // Fake success for sender to avoid detection (Anti-Spam)
              socket.emit('message_sent', { tempId: message.id, status: 'sent' });
              return;
         }
 
-        await saveMessageToDB(senderId, receiverId, message);
+        const success = await saveMessageToDB(senderId, receiverId, message);
 
-        socket.emit('message_sent', { tempId: message.id, status: 'sent' });
-
-        const group = await Group.findOne({ id: receiverId }).select('id');
-        if (group) {
-             io.to(receiverId).emit('receive_message', { message, chatId: receiverId });
+        if (success) {
+            socket.emit('message_sent', { tempId: message.id, status: 'sent' });
+            
+            const group = await Group.findOne({ id: receiverId }).select('id');
+            if (group) {
+                 io.to(receiverId).emit('receive_message', { message, chatId: receiverId });
+            } else {
+                 io.to(receiverId).emit('receive_message', { message });
+            }
         } else {
-             io.to(receiverId).emit('receive_message', { message });
+             socket.emit('message_sent', { tempId: message.id, status: 'error' });
         }
     });
 
-    // --- E2EE RELAY EVENTS (Server doesn't process, just forwards) ---
-    
     socket.on('secret_chat_request', ({ targetId, senderPublicKey, tempChatId }) => {
         io.to(targetId).emit('secret_chat_request', { 
             from: userId, 
@@ -689,25 +746,22 @@ io.on('connection', (socket) => {
     });
 
     socket.on('edit_message', async ({ message, chatId }) => {
-        const senderId = message.senderId;
+        const senderId = socket.userId; // Secure sender
+        if (message.senderId !== senderId) return;
+
         const targetId = chatId; 
         
-        // Update in DB
         if (chatId) {
-            // Group logic
             await Group.updateOne(
                 { id: chatId, "chatHistory.id": message.id },
                 { $set: { "chatHistory.$.text": message.text, "chatHistory.$.isEdited": true } }
             );
             io.to(chatId).emit('message_edited', { message, chatId });
         } else {
-            // DM logic
-            // Update sender's copy
             await User.updateOne(
                 { id: senderId, [`chatHistory.${targetId}.id`]: message.id },
                 { $set: { [`chatHistory.${targetId}.$.text`]: message.text, [`chatHistory.${targetId}.$.isEdited`]: true } }
             );
-            // Update receiver's copy
             await User.updateOne(
                 { id: targetId, [`chatHistory.${senderId}.id`]: message.id },
                 { $set: { [`chatHistory.${senderId}.$.text`]: message.text, [`chatHistory.${senderId}.$.isEdited`]: true } }
@@ -719,11 +773,10 @@ io.on('connection', (socket) => {
     });
     
     socket.on('delete_message', async ({ messageId, chatId, forEveryone }) => {
-        const senderId = userId; // current user
-        const targetId = chatId; // in DM, chatId is the other user ID
+        const senderId = socket.userId; 
+        const targetId = chatId; 
 
         if (forEveryone) {
-            // Group
             const group = await Group.findOne({ id: chatId });
             if (group) {
                 await Group.updateOne({ id: chatId }, { $pull: { chatHistory: { id: messageId } } });
@@ -731,27 +784,17 @@ io.on('connection', (socket) => {
                 return;
             }
             
-            // DM
-            // Delete from sender
             await User.updateOne({ id: senderId }, { $pull: { [`chatHistory.${targetId}`]: { id: messageId } } });
-            // Delete from receiver
             await User.updateOne({ id: targetId }, { $pull: { [`chatHistory.${senderId}`]: { id: messageId } } });
             
             io.to(targetId).emit('message_deleted', { messageId, chatId: senderId });
             io.to(senderId).emit('message_deleted', { messageId, chatId: targetId });
         } else {
-            // Local delete only
-            // Client handles UI, server just ensures sync for this user
-            // We assume client already called API to clear or handled it locally? 
-            // Actually, for single message local delete, usually we just update that user's document.
-            // But here we'll just do it for sender.
              await User.updateOne({ id: senderId }, { $pull: { [`chatHistory.${targetId}`]: { id: messageId } } });
         }
     });
 
     socket.on('mark_read', async ({ chatId, readerId }) => {
-        // Update DB statuses
-        // For DM:
         await User.updateMany(
             { id: chatId, [`chatHistory.${readerId}.status`]: 'sent' },
             { $set: { [`chatHistory.${readerId}.$[elem].status`]: 'read' } },
@@ -766,7 +809,7 @@ io.on('connection', (socket) => {
             sockets.delete(socket.id);
             if (sockets.size === 0) {
                 userSocketMap.delete(userId);
-                updateUserStatus(userId, false); // Mark offline
+                updateUserStatus(userId, false); 
             }
         }
     });

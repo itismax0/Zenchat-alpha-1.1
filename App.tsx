@@ -79,6 +79,7 @@ const App: React.FC = () => {
   const activeContactIdRef = useRef(activeContactId);
   const settingsRef = useRef(settings);
   const typingStatusTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const isConnectedRef = useRef(false);
 
   useEffect(() => {
     userProfileRef.current = userProfile;
@@ -133,8 +134,7 @@ const App: React.FC = () => {
           setIsAuthenticated(true);
       } catch (error) {
           console.error("Failed to load user data:", error);
-          db.logout();
-          setIsAuthenticated(false);
+          // Do NOT logout on read error, just alerting console.
       }
   };
 
@@ -151,7 +151,8 @@ const App: React.FC = () => {
 
   // --- SOCKET ---
   useEffect(() => {
-    if (isAuthenticated && userProfile.id) {
+    if (isAuthenticated && userProfile.id && !isConnectedRef.current) {
+        isConnectedRef.current = true;
         socketService.connect(userProfile.id);
         
         socketService.onConnect(async () => {
@@ -304,6 +305,7 @@ const App: React.FC = () => {
             }
 
             if (senderId === myId) {
+                // Check duplicate by temporary ID or real ID
                 const existing = chatHistoryRef.current[targetId]?.find(m => m.id === message.id);
                 if (existing) return;
             }
@@ -340,7 +342,8 @@ const App: React.FC = () => {
                          isOnline: true
                      };
                      updatedList = [newContact, ...prev];
-                     db.syncWithServer(myId).then(() => loadUserData(myId));
+                     // Only sync if strictly necessary to avoid loops
+                     // db.syncWithServer(myId); 
                 } else {
                     updatedList = prev.map(c => c.id === targetId ? {
                         ...c,
@@ -369,6 +372,7 @@ const App: React.FC = () => {
                     const msgIndex = messages.findIndex(m => m.id === tempId);
                     if (msgIndex !== -1) {
                         const updatedMsgs = [...messages];
+                        // If error, mark as error. If sent, mark as sent.
                         updatedMsgs[msgIndex] = { ...updatedMsgs[msgIndex], status: status as any };
                         newHistory[contactId] = updatedMsgs;
                         found = true;
@@ -415,7 +419,10 @@ const App: React.FC = () => {
         socketService.onIceCandidate(({ candidate }) => connectionRef.current?.signal(candidate));
         socketService.onCallEnded(() => leaveCall());
 
-        return () => socketService.disconnect();
+        return () => {
+             socketService.disconnect();
+             isConnectedRef.current = false;
+        };
     }
   }, [isAuthenticated, userProfile.id]); 
 
@@ -570,6 +577,7 @@ const App: React.FC = () => {
   const handleLoginSuccess = (profile: UserProfile) => loadUserData(profile.id);
   const handleLogout = async () => {
       socketService.disconnect();
+      isConnectedRef.current = false;
       await db.logout();
       setIsAuthenticated(false);
       setActiveContactId(null);
@@ -650,6 +658,23 @@ const App: React.FC = () => {
       
       setChatHistory(prev => ({ ...prev, [activeContactId]: [...(prev[activeContactId]||[]), msg] }));
       
+      // CRITICAL FIX: Update contact list immediately for sender to prevent UI sync lag
+      setContacts(prev => {
+          const existing = prev.find(c => c.id === activeContactId);
+          const preview = type === 'text' ? text : (type === 'image' ? 'Фото' : 'Вложение');
+          
+          if (existing) {
+              const updated = prev.map(c => c.id === activeContactId ? {
+                  ...c,
+                  lastMessage: preview,
+                  lastMessageTime: Date.now()
+              } : c);
+              // Sort by time descending
+              return updated.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
+          }
+          return prev;
+      });
+
       const activeContact = contacts.find(c => c.id === activeContactId);
 
       if (activeContact?.isSecret) {
