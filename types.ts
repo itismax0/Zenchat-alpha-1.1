@@ -6,7 +6,7 @@ export interface User {
   isSelf: boolean;
 }
 
-export type MessageType = 'text' | 'image' | 'sticker' | 'file' | 'location' | 'voice';
+export type MessageType = 'text' | 'image' | 'sticker' | 'file' | 'location' | 'voice' | 'contact';
 
 export type ContactType = 'user' | 'group' | 'channel';
 
@@ -37,6 +37,13 @@ export interface Message {
   latitude?: number;      // For location
   longitude?: number;     // For location
   duration?: number;      // For voice messages (seconds)
+  contactInfo?: {         // For contact sharing
+      id: string;
+      name: string;
+      avatarUrl: string;
+      username?: string;
+      phoneNumber?: string;
+  };
   
   // New fields for context menu features
   replyTo?: {
@@ -48,6 +55,10 @@ export interface Message {
   isPinned?: boolean;
   isEdited?: boolean;
   isForwarded?: boolean;
+  
+  // E2EE
+  isEncrypted?: boolean;
+  iv?: string; // Initialization Vector for decryption
 }
 
 export interface Contact {
@@ -79,10 +90,15 @@ export interface Contact {
 
   description?: string; // For groups/channels
   isMuted?: boolean; // Added: Mute notifications status
+  autoDelete?: number; // Seconds. 0 = off.
+  
+  // Secret Chat
+  isSecret?: boolean; // True if this is a Secret Chat
+  
   settings?: {
       historyVisible?: boolean;
       sendMessages?: boolean;
-      autoDeleteMessages?: number; // Added: 0 = off, otherwise seconds
+      autoDeleteMessages?: number; 
   };
 }
 
@@ -108,6 +124,8 @@ export interface UserProfile {
   address?: string;    // New field
   birthDate?: string;  // New field
   
+  blockedUsers?: string[]; // Array of blocked user IDs
+
   // Customization
   statusEmoji?: string;
   profileColor?: string;

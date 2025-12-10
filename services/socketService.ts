@@ -1,9 +1,8 @@
 
 import { io, Socket } from 'socket.io-client';
 import { Message, Contact } from '../types';
+import { encryptionService } from './encryptionService';
 
-// Use relative path for unified deployment (Render)
-// For local development, the Vite proxy will forward this to the backend port.
 const SOCKET_URL = '/';
 
 class SocketService {
@@ -15,13 +14,16 @@ class SocketService {
 
         this.userId = userId;
         this.socket = io(SOCKET_URL, {
-            path: '/socket.io', // Standard Socket.io path
-            transports: ['websocket', 'polling'], // Try websocket first
+            path: '/socket.io',
+            transports: ['websocket', 'polling'],
             reconnectionAttempts: 10,
-            reconnectionDelay: 1000
+            reconnectionDelay: 1000,
+            auth: {
+                token: localStorage.getItem('zenchat_session') 
+            }
         });
 
-        this.socket.on('connect', () => {
+        this.socket.on('connect', async () => {
             console.log('Connected to socket server');
             this.socket?.emit('join', userId);
         });
@@ -38,42 +40,60 @@ class SocketService {
         }
     }
 
-    sendMessage(message: Message, receiverId: string) {
+    // Updated sendMessage to support encrypted payloads directly
+    async sendMessage(message: Message, receiverId: string, encryptedPayload?: { content: string, iv: string }) {
         if (this.socket) {
-            this.socket.emit('send_message', {
-                message,
-                receiverId
-            });
+            if (encryptedPayload) {
+                // Send E2EE payload
+                this.socket.emit('send_message', {
+                    receiverId,
+                    message: {
+                        ...message,
+                        text: encryptedPayload.content, // Send ciphertext in text field
+                        isEncrypted: true,
+                        iv: encryptedPayload.iv
+                    }
+                });
+            } else {
+                // Standard message
+                this.socket.emit('send_message', { message, receiverId });
+            }
+        }
+    }
+
+    // --- E2EE Handshake Methods ---
+
+    requestSecretChat(targetId: string, senderPublicKey: string, tempChatId: string) {
+        this.socket?.emit('secret_chat_request', { targetId, senderPublicKey, tempChatId });
+    }
+
+    acceptSecretChat(targetId: string, acceptorPublicKey: string, tempChatId: string) {
+        this.socket?.emit('secret_chat_accepted', { targetId, acceptorPublicKey, tempChatId });
+    }
+
+    // --- Standard Methods ---
+
+    editMessage(message: Message, chatId: string) {
+        if (this.socket) {
+            this.socket.emit('edit_message', { message, chatId });
         }
     }
 
     sendTyping(receiverId: string, isTyping: boolean) {
         if (this.socket) {
-            this.socket.emit('typing', {
-                to: receiverId,
-                from: this.userId,
-                isTyping
-            });
+            this.socket.emit('typing', { to: receiverId, from: this.userId, isTyping });
         }
     }
 
-    // New: Mark messages as read
     markAsRead(chatId: string, readerId: string) {
         if (this.socket) {
             this.socket.emit('mark_read', { chatId, readerId });
         }
     }
 
-    // --- WebRTC Signaling Methods ---
-
     callUser(userToCall: string, signalData: any, name: string) {
         if (this.socket) {
-            this.socket.emit("callUser", {
-                userToCall,
-                signalData,
-                from: this.userId,
-                name
-            });
+            this.socket.emit("callUser", { userToCall, signalData, from: this.userId, name });
         }
     }
 
@@ -83,15 +103,15 @@ class SocketService {
         }
     }
 
-    sendIceCandidate(target: string, candidate: any) {
-        if (this.socket) {
-            this.socket.emit("iceCandidate", { target, candidate });
-        }
-    }
-
     endCall(to: string) {
         if (this.socket) {
             this.socket.emit("endCall", { to });
+        }
+    }
+
+    sendIceCandidate(target: string, candidate: any) {
+        if (this.socket) {
+            this.socket.emit("iceCandidate", { target, candidate });
         }
     }
 
@@ -101,15 +121,32 @@ class SocketService {
         this.socket?.on('connect', callback);
     }
 
-    onMessage(callback: (data: { message: Message, chatId?: string }) => void) {
-        this.socket?.on('receive_message', callback);
+    onMessage(callback: (data: { message: any, chatId?: string }) => void) {
+        this.socket?.on('receive_message', (data) => {
+            callback(data);
+        });
     }
 
     onMessageSent(callback: (data: { tempId: string, status: string }) => void) {
         this.socket?.on('message_sent', callback);
     }
 
-    // New: Listen for read receipts
+    // --- E2EE Listeners ---
+    
+    onSecretChatRequest(callback: (data: { from: string, senderPublicKey: string, tempChatId: string }) => void) {
+        this.socket?.on('secret_chat_request', callback);
+    }
+
+    onSecretChatAccepted(callback: (data: { from: string, acceptorPublicKey: string, tempChatId: string }) => void) {
+        this.socket?.on('secret_chat_accepted', callback);
+    }
+
+    // --- Other Listeners ---
+
+    onMessageEdited(callback: (data: { message: Message, chatId: string }) => void) {
+        this.socket?.on('message_edited', callback);
+    }
+
     onMessagesRead(callback: (data: { chatId: string }) => void) {
         this.socket?.on('messages_read', callback);
     }
@@ -118,21 +155,18 @@ class SocketService {
         this.socket?.on('typing', callback);
     }
 
-    onUserStatus(callback: (data: { userId: string, isOnline: boolean }) => void) {
+    onUserStatus(callback: (data: { userId: string, isOnline: boolean, lastSeen: number }) => void) {
         this.socket?.on('user_status', callback);
     }
     
-    // New: Listen for new groups/chats
     onNewChat(callback: (contact: Contact) => void) {
         this.socket?.on('new_chat', callback);
     }
     
-    // New: Listen for contact profile updates
     onContactUpdate(callback: (data: any) => void) {
         this.socket?.on('contact_update', callback);
     }
 
-    // Call Listeners
     onIncomingCall(callback: (data: { from: string, name: string, signal: any }) => void) {
         this.socket?.on('callUser', callback);
     }

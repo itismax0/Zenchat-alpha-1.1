@@ -1,11 +1,12 @@
 
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { Contact, Message, AppSettings, MessageType } from '../types';
-import { Send, Paperclip, Smile, MoreVertical, Phone, ArrowLeft, Image as ImageIcon, File as FileIcon, X, MapPin, Mic, Trash2, Lock, Reply, Edit2, Check, Pin, List, ChevronDown } from 'lucide-react';
+import { Send, Paperclip, Smile, MoreVertical, Phone, ArrowLeft, Image as ImageIcon, File as FileIcon, X, MapPin, Mic, Trash2, Lock, Reply, Edit2, Check, Pin, List, ChevronDown, Clock, Ban, Eraser, Forward, Wallpaper, BellOff, UserPlus } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import EncryptionModal from './EncryptionModal';
+import SecurityInfoModal from './SecurityInfoModal';
 import MessageContextMenu from './MessageContextMenu';
 import { ForwardModal, DeleteModal, TranslationModal } from './ActionModals';
 import { db } from '../services/db'; 
@@ -16,7 +17,7 @@ import { SAVED_MESSAGES_ID } from '../constants';
 interface ChatWindowProps {
   contact: Contact;
   messages: Message[];
-  onSendMessage: (text: string, file?: File | null, type?: MessageType, duration?: number, replyToId?: string, isForwarded?: boolean) => void;
+  onSendMessage: (text: string, file?: File | null, type?: MessageType, duration?: number, replyToId?: string, isForwarded?: boolean, contactInfo?: any) => void;
   onSendSticker: (url: string) => void;
   onSendLocation: (lat: number, lng: number) => void;
   isTyping: boolean;
@@ -26,8 +27,18 @@ interface ChatWindowProps {
   onCall?: () => void; 
   currentUserId?: string; 
   onForwardMessage?: (contactId: string, message: Message) => void;
+  
+  // New props for context menu features
+  onBlockUser?: (contactId: string, isBlocked: boolean) => void;
+  onClearHistory?: (contactId: string) => void;
+  onSetAutoDelete?: (contactId: string, seconds: number) => void;
+  onShareContact?: (contactId: string) => void;
+  onChangeWallpaper?: () => void;
+  onCreateSecretChat?: (contactId: string) => void;
+  isBlocked?: boolean;
 }
 
+// Only used for CSS class based presets
 const BACKGROUND_THEMES: Record<string, string> = {
   default: 'bg-[#f8fafc] dark:bg-slate-900',
   blue: 'bg-blue-50 dark:bg-blue-950',
@@ -37,6 +48,10 @@ const BACKGROUND_THEMES: Record<string, string> = {
   purple: 'bg-purple-50 dark:bg-purple-950',
   slate: 'bg-slate-200 dark:bg-slate-800',
   red: 'bg-red-50 dark:bg-red-950',
+  'gradient-1': 'bg-gradient-to-br from-orange-100 to-rose-100 dark:from-orange-900/40 dark:to-rose-900/40',
+  'gradient-2': 'bg-gradient-to-br from-cyan-100 to-blue-100 dark:from-cyan-900/40 dark:to-blue-900/40',
+  'gradient-3': 'bg-gradient-to-br from-emerald-100 to-teal-100 dark:from-emerald-900/40 dark:to-teal-900/40',
+  'gradient-4': 'bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900',
 };
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ 
@@ -51,9 +66,15 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     onOpenProfile, 
     onCall, 
     currentUserId,
-    onForwardMessage
+    onForwardMessage,
+    onBlockUser,
+    onClearHistory,
+    onSetAutoDelete,
+    onShareContact,
+    onChangeWallpaper,
+    onCreateSecretChat,
+    isBlocked
 }) => {
-  // Local state for immediate UI updates (optimistic UI)
   const [localMessages, setLocalMessages] = useState<Message[]>(initialMessages);
 
   const [inputValue, setInputValue] = useState('');
@@ -61,14 +82,15 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [showEncryptionModal, setShowEncryptionModal] = useState(false);
+  
+  // Modals
+  const [showEncryptionModal, setShowEncryptionModal] = useState(false); // For Secret Chat Key
+  const [showSecurityModal, setShowSecurityModal] = useState(false); // For Normal Chat Info
 
-  // Context Menu State
   const [contextMenuMsg, setContextMenuMsg] = useState<Message | null>(null);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState({ x: 0, y: 0 });
 
-  // Action Modal States
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [translationModalOpen, setTranslationModalOpen] = useState(false);
@@ -79,31 +101,29 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [messageToTranslate, setMessageToTranslate] = useState<Message | null>(null);
   const [showForwardSuccess, setShowForwardSuccess] = useState(false);
 
-  // Contacts for forwarding (fetched from DB roughly)
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const headerMenuRef = useRef<HTMLDivElement>(null);
+
   const [allContacts, setAllContacts] = useState<Contact[]>([]);
 
-  // Reply / Edit State
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
 
-  // Selection State
+  const showMic = !inputValue.trim() && !selectedFile && !editingMessage;
+
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
 
-  // Scroll State
   const [showScrollBottom, setShowScrollBottom] = useState(false);
 
-  // Safe fallback for appearance
   const safeAppearance = appearance || { chatBackground: 'default', textSize: 100, darkMode: false };
 
-  // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
-  // Typing indicator timeout ref
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -112,11 +132,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Pinned Messages Logic
   const pinnedMessages = localMessages.filter(m => m.isPinned);
-  const [activePinIndex, setActivePinIndex] = useState(0);
+  const activePinIndexState = useState(0);
+  const activePinIndex = activePinIndexState[0];
+  const setActivePinIndex = activePinIndexState[1];
 
-  // When pinned messages change, make sure index is valid
   useEffect(() => {
      if (activePinIndex >= pinnedMessages.length && pinnedMessages.length > 0) {
          setActivePinIndex(pinnedMessages.length - 1);
@@ -146,12 +166,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     return contact.name;
   };
 
-  // Sync messages
   useEffect(() => {
     setLocalMessages(initialMessages);
   }, [initialMessages]);
 
-  // --- SMART SCROLL LOGIC ---
   const scrollToBottom = (smooth = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
   };
@@ -164,7 +182,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       }
   };
 
-  // Auto-scroll on new message ONLY if near bottom or if it's my message
   useLayoutEffect(() => {
     const lastMessage = localMessages[localMessages.length - 1];
     const isMe = lastMessage?.senderId === currentUserId;
@@ -173,12 +190,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
         const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
         const isNearBottom = scrollHeight - scrollTop - clientHeight < 300;
 
-        // If I sent it, or if I'm already at the bottom, scroll down
         if (isMe || isNearBottom) {
             scrollToBottom();
         }
     } else {
-        // Initial load
         scrollToBottom(false);
     }
   }, [localMessages, isTyping, previewUrl, replyingTo, editingMessage]);
@@ -187,7 +202,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       const element = document.getElementById(`msg-${messageId}`);
       if (element) {
           element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          // Highlight effect
           element.classList.add('bg-blue-100', 'dark:bg-slate-700/50', 'transition-colors', 'duration-500');
           setTimeout(() => {
               element.classList.remove('bg-blue-100', 'dark:bg-slate-700/50');
@@ -195,7 +209,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       }
   };
 
-  // Load contacts for forwarding
   useEffect(() => {
      if (currentUserId) {
          const data = db.getData(currentUserId);
@@ -203,7 +216,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
      }
   }, [currentUserId, forwardModalOpen]);
 
-  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
         const target = e.target as HTMLElement;
@@ -211,12 +223,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             setShowEmojiPicker(false);
             setShowAttachMenu(false);
         }
+        if (headerMenuRef.current && !headerMenuRef.current.contains(target)) {
+            setShowHeaderMenu(false);
+        }
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
         if (recordingTimerRef.current) {
@@ -232,17 +246,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       const newValue = e.target.value;
       setInputValue(newValue);
 
-      // Typing Indicator Logic
       if (contact.type === 'user' && contact.id !== 'gemini-ai' && contact.id !== 'saved-messages') {
-          // Send "typing" event
           socketService.sendTyping(contact.id, true);
-
-          // Clear previous timeout to keep "typing" active while user is typing
           if (typingTimeoutRef.current) {
               clearTimeout(typingTimeoutRef.current);
           }
-
-          // Set timeout to stop "typing" after 2 seconds of inactivity
           typingTimeoutRef.current = setTimeout(() => {
               socketService.sendTyping(contact.id, false);
           }, 2000);
@@ -251,26 +259,22 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
   const handleSend = () => {
     if (editingMessage) {
-        // Handle Edit Logic
+        const editedMsg = { ...editingMessage, text: inputValue, isEdited: true };
         const updatedMessages = localMessages.map(m => 
-            m.id === editingMessage.id ? { ...m, text: inputValue, isEdited: true } : m
+            m.id === editingMessage.id ? editedMsg : m
         );
         setLocalMessages(updatedMessages);
-        // Persist locally
         db.saveData(currentUserId || '', { chatHistory: { [contact.id]: updatedMessages } });
         
-        // Emit edit event (Mock)
         if (contact.id !== 'gemini-ai') {
-            socketService.sendMessage({ ...editingMessage, text: inputValue, isEdited: true }, contact.id);
+            socketService.editMessage(editedMsg, contact.id);
         }
 
         setEditingMessage(null);
         setInputValue('');
         
-        // Stop typing status immediately on send
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         socketService.sendTyping(contact.id, false);
-        
         return;
     }
 
@@ -287,10 +291,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       setPreviewUrl(null);
       setReplyingTo(null);
 
-      // Scroll to bottom immediately
       setTimeout(() => scrollToBottom(), 50);
 
-      // Stop typing status immediately on send
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (contact.type === 'user' && contact.id !== 'gemini-ai') {
           socketService.sendTyping(contact.id, false);
@@ -321,7 +323,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
               setPreviewUrl(null);
           }
       }
-      // Reset input value to allow selecting same file again
       e.target.value = '';
   };
 
@@ -342,7 +343,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
-  // --- Voice Recording Logic ---
   const startRecording = async () => {
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -360,7 +360,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           setIsRecording(true);
           setRecordingDuration(0);
 
-          // Send typing (recording) status
           if (contact.type === 'user' && contact.id !== 'gemini-ai') {
               socketService.sendTyping(contact.id, true);
           }
@@ -392,7 +391,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
               mediaRecorderRef.current = null;
               audioChunksRef.current = [];
 
-              // Stop typing status
               if (contact.type === 'user' && contact.id !== 'gemini-ai') {
                   socketService.sendTyping(contact.id, false);
               }
@@ -409,24 +407,20 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       }
   };
 
-  // --- Context Menu Logic ---
   const handleContextMenu = (e: React.MouseEvent | React.TouchEvent, message: Message) => {
     e.preventDefault();
     if (isSelectionMode) return;
     
-    // Vibrate on mobile for haptic feedback
     if (navigator.vibrate) navigator.vibrate(50);
     
     let x = 0;
     let y = 0;
 
     if ('touches' in e) {
-        // Touch event
         const touch = e.touches[0];
         x = touch.clientX;
         y = touch.clientY;
     } else {
-        // Mouse event
         const mouseEvent = e as React.MouseEvent;
         x = mouseEvent.clientX;
         y = mouseEvent.clientY;
@@ -442,7 +436,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
       switch (action) {
           case 'react':
-              // Handle reaction
               const updatedWithReaction = localMessages.map(m => {
                   if (m.id === message.id) {
                       const reactions = m.reactions || [];
@@ -451,14 +444,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                       
                       if (existing) {
                           if (existing.userReacted) {
-                              // Remove reaction
                               newReactions = reactions.map(r => r.emoji === payload ? { ...r, count: r.count - 1, userReacted: false } : r).filter(r => r.count > 0);
                           } else {
-                              // Add count
                               newReactions = reactions.map(r => r.emoji === payload ? { ...r, count: r.count + 1, userReacted: true } : r);
                           }
                       } else {
-                          // New reaction
                           newReactions = [...reactions, { emoji: payload, count: 1, userReacted: true }];
                       }
                       return { ...m, reactions: newReactions };
@@ -507,9 +497,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
               setLocalMessages(pinnedMsgs);
               db.saveData(currentUserId || '', { chatHistory: { [contact.id]: pinnedMsgs } });
               
-              // If pinning, set active index to this new pin
               if (newPinnedState) {
-                  // Wait for state update to calculate index (simplified for now to just show latest)
                   setActivePinIndex(pinnedMsgs.filter(m => m.isPinned).length - 1);
               }
               break;
@@ -540,7 +528,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
       if (forEveryone && contact.id !== 'gemini-ai') {
           // Emit socket event for delete (Mock implementation for now)
-          // In real app: socketService.deleteMessage(messageToDelete.id, contact.id);
       }
 
       setDeleteModalOpen(false);
@@ -557,7 +544,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       setForwardModalOpen(false);
       setMessageToForward(null);
 
-      // Show success toast
       setShowForwardSuccess(true);
       setTimeout(() => setShowForwardSuccess(false), 2000);
   };
@@ -575,7 +561,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       setLocalMessages(remainingMessages);
       setIsSelectionMode(false);
       setSelectedMessageIds([]);
-      // Persist
       db.saveData(currentUserId || '', { chatHistory: { [contact.id]: remainingMessages } });
   };
 
@@ -597,10 +582,17 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       // Less than 1 hour
       if (diff < 3600000) {
           const mins = Math.floor(diff / 60000);
-          return `был(а) ${mins} мин. назад`;
+          // Proper pluralization for Russian 'minutes'
+          let suffix = 'минут';
+          const lastDigit = mins % 10;
+          const lastTwoDigits = mins % 100;
+          
+          if (lastDigit === 1 && lastTwoDigits !== 11) suffix = 'минуту';
+          else if ([2,3,4].includes(lastDigit) && ![12,13,14].includes(lastTwoDigits)) suffix = 'минуты';
+          
+          return `был(а) ${mins} ${suffix} назад`;
       }
       
-      // Today (Less than 24 hours and same day date)
       const date = new Date(timestamp);
       const today = new Date();
       const isToday = date.getDate() === today.getDate() && 
@@ -611,7 +603,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           return `был(а) сегодня в ${date.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'})}`;
       }
       
-      // Yesterday
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const isYesterday = date.getDate() === yesterday.getDate() && 
@@ -627,43 +618,51 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
   const getStatusText = () => {
       if (contact.id === SAVED_MESSAGES_ID) return '';
+      if (contact.id === 'gemini-ai') return 'bot';
       
-      // Priority 1: Typing
       if (isTyping) return 'печатает...';
       
-      // Priority 2: Groups/Channels
       if (contact.type === 'channel') return `${contact.membersCount || 245} подписчиков`;
       if (contact.type === 'group') return `${contact.membersCount || 3} участников`;
       
-      // Priority 3: Online Status
       if (contact.isOnline) return 'в сети';
       
-      // Priority 4: Last Seen
       return formatLastSeen(contact.lastSeen);
   };
 
-  const bgClass = BACKGROUND_THEMES[safeAppearance.chatBackground] || BACKGROUND_THEMES['default'];
-  const showMic = !inputValue.trim() && !selectedFile;
+  // BACKGROUND LOGIC
+  const bgSetting = safeAppearance.chatBackground;
+  
+  // Check if it's a custom background (starts with data:, http, or is a url)
+  const isCustomBg = bgSetting && (bgSetting.startsWith('data:') || bgSetting.startsWith('http') || bgSetting.startsWith('url'));
+  
+  // If custom, use inline style. If preset, use class from map.
+  const bgStyle = isCustomBg ? { 
+      backgroundImage: `url(${bgSetting})`, 
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat'
+  } : {};
+  
+  const bgClass = !isCustomBg ? (BACKGROUND_THEMES[bgSetting] || BACKGROUND_THEMES['default']) : 'bg-white dark:bg-slate-900';
 
   return (
     <div 
         className={`flex flex-col h-full relative transition-colors duration-200 ${bgClass}`}
-        style={{ fontSize: `${safeAppearance.textSize}%` }}
+        style={{ fontSize: `${safeAppearance.textSize}%`, ...bgStyle }}
     >
-       <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05] pointer-events-none" 
-            style={{ 
-                backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23000000' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
-            }} 
-       />
+       {!isCustomBg && (
+           <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.05] pointer-events-none" 
+            // Removed pattern as per previous request, keeping minimal
+           />
+       )}
 
-      {/* Success Toast */}
       {showForwardSuccess && (
           <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-[150] bg-black/80 text-white px-4 py-2 rounded-full text-sm font-medium animate-in fade-in slide-in-from-top-5 duration-300">
               Сообщение переслано
           </div>
       )}
 
-      {/* Scroll Down Button */}
       {showScrollBottom && (
           <button 
              onClick={() => scrollToBottom()}
@@ -673,10 +672,16 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           </button>
       )}
 
+      {/* MODALS */}
       <EncryptionModal 
         isOpen={showEncryptionModal}
         onClose={() => setShowEncryptionModal(false)}
         contact={contact}
+      />
+
+      <SecurityInfoModal
+        isOpen={showSecurityModal}
+        onClose={() => setShowSecurityModal(false)}
       />
 
       <ForwardModal 
@@ -715,7 +720,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       <input type="file" ref={imageInputRef} accept="image/*" className="hidden" onChange={handleFileSelect} />
       <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
 
-      {/* Header */}
       <header 
         className="flex-none px-4 py-3 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border-b border-gray-200 dark:border-slate-700 flex justify-between items-center z-20 sticky top-0 transition-colors"
       >
@@ -742,13 +746,29 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                     </div>
                     <div>
                         <div className="flex items-center gap-1.5">
-                            <h2 className="text-slate-900 dark:text-white font-semibold text-sm leading-tight">
+                            <h2 className={`text-slate-900 dark:text-white font-semibold text-sm leading-tight ${contact.isSecret ? 'text-green-600 dark:text-green-400' : ''}`}>
                                 {contact.name}
                             </h2>
+                            {contact.autoDelete && contact.autoDelete > 0 && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onSetAutoDelete?.(contact.id, 0); }}
+                                    className="text-blue-500 hover:text-blue-600"
+                                    title={`Автоудаление через ${Math.round(contact.autoDelete / 3600)}ч`}
+                                >
+                                    <Clock size={12} strokeWidth={2.5} />
+                                </button>
+                            )}
                             <button 
-                                onClick={(e) => { e.stopPropagation(); setShowEncryptionModal(true); }}
-                                className="text-gray-400 hover:text-green-500 transition-colors focus:outline-none"
-                                title="Зашифровано"
+                                onClick={(e) => { 
+                                    e.stopPropagation(); 
+                                    if (contact.isSecret) {
+                                        setShowEncryptionModal(true); 
+                                    } else {
+                                        setShowSecurityModal(true);
+                                    }
+                                }}
+                                className={`${contact.isSecret ? 'text-green-500 hover:text-green-600' : 'text-gray-400 hover:text-green-500'} transition-colors focus:outline-none`}
+                                title={contact.isSecret ? "Секретный чат (E2EE)" : "Зашифровано"}
                             >
                                 <Lock size={12} strokeWidth={2.5} />
                             </button>
@@ -765,15 +785,60 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                     >
                         <Phone size={20} />
                     </button>
-                    <button className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition-colors btn-press">
-                        <MoreVertical size={20} />
-                    </button>
+                    
+                    <div className="relative" ref={headerMenuRef}>
+                        <button 
+                            onClick={() => setShowHeaderMenu(!showHeaderMenu)}
+                            className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition-colors btn-press"
+                        >
+                            <MoreVertical size={20} />
+                        </button>
+                        
+                        {showHeaderMenu && (
+                            <div className="absolute top-full right-0 mt-2 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-gray-100 dark:border-slate-700 py-1 z-50 animate-dropdown origin-top-right overflow-hidden">
+                                {contact.type === 'user' && (
+                                    <>
+                                    <button onClick={() => { setShowHeaderMenu(false); onChangeWallpaper?.(); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-800 dark:text-white transition-colors">
+                                        <span className="font-medium text-sm">Изменить обои</span>
+                                        <Wallpaper size={18} className="text-gray-500" />
+                                    </button>
+                                    
+                                    {!contact.isSecret && (
+                                        <button onClick={() => { setShowHeaderMenu(false); onCreateSecretChat?.(contact.id); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-800 dark:text-white transition-colors">
+                                            <span className="font-medium text-sm">Начать секретный чат</span>
+                                            <Lock size={18} className="text-green-500" />
+                                        </button>
+                                    )}
+
+                                    <button onClick={() => { setShowHeaderMenu(false); onShareContact?.(contact.id); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-800 dark:text-white transition-colors">
+                                        <span className="font-medium text-sm">Отправить контакт</span>
+                                        <Forward size={18} className="text-gray-500" />
+                                    </button>
+                                    <button onClick={() => { setShowHeaderMenu(false); onSetAutoDelete?.(contact.id, 0); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-800 dark:text-white transition-colors">
+                                        <span className="font-medium text-sm flex items-center gap-2">
+                                            Автоудаление
+                                            {contact.autoDelete && contact.autoDelete > 0 && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 rounded">Вкл</span>}
+                                        </span>
+                                        <Clock size={18} className="text-gray-500" />
+                                    </button>
+                                    <button onClick={() => { setShowHeaderMenu(false); onClearHistory?.(contact.id); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-800 dark:text-white transition-colors">
+                                        <span className="font-medium text-sm">Удалить переписку</span>
+                                        <Eraser size={18} className="text-gray-500" />
+                                    </button>
+                                    <button onClick={() => { setShowHeaderMenu(false); onBlockUser?.(contact.id, !isBlocked); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors">
+                                        <span className="font-medium text-sm">{isBlocked ? 'Разблокировать' : 'Заблокировать'}</span>
+                                        <Ban size={18} />
+                                    </button>
+                                    </>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </>
         )}
       </header>
 
-      {/* Pinned Message Header */}
       {currentPinnedMessage && !isSelectionMode && (
           <div 
              className="sticky top-[61px] md:top-[69px] z-10 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm px-4 py-2 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center cursor-pointer shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 transition-all animate-in slide-in-from-top-5 duration-300"
@@ -785,7 +850,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                       <h4 className="text-blue-500 text-xs font-bold flex items-center gap-1">
                           {pinnedMessages.length > 1 ? `Закрепленное сообщение #${activePinIndex + 1}` : 'Закрепленное сообщение'}
                       </h4>
-                      {/* Key added to force animation on text change */}
                       <p key={currentPinnedMessage.id} className="text-sm text-slate-700 dark:text-slate-300 truncate animate-fade-in">
                           {currentPinnedMessage.text || (currentPinnedMessage.type === 'image' ? 'Фотография' : 'Вложение')}
                       </p>
@@ -804,7 +868,6 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
       )}
 
-      {/* Messages Area */}
       <div 
           className="flex-1 overflow-y-auto p-4 md:p-6 z-0 scroll-smooth"
           ref={messagesContainerRef}
@@ -814,7 +877,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             
             <div className="flex justify-center mb-6">
                 <button 
-                    onClick={() => setShowEncryptionModal(true)}
+                    onClick={() => contact.isSecret ? setShowEncryptionModal(true) : setShowSecurityModal(true)}
                     className="bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 text-[10px] md:text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 hover:bg-yellow-200 dark:hover:bg-yellow-900/40 transition-colors cursor-pointer btn-press"
                 >
                     <Lock size={10} />
@@ -852,170 +915,180 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
         </div>
       </div>
 
-      {/* Input Area */}
       <div className="flex-none bg-white dark:bg-slate-800 p-3 md:p-4 border-t border-gray-200 dark:border-slate-700 z-10 transition-colors safe-area-bottom">
-        <div className="max-w-3xl mx-auto">
-            {/* Context (Reply/Edit) Bar */}
-            {(replyingTo || editingMessage) && (
-                <div className="flex items-center justify-between mb-2 px-4 py-2 bg-gray-50 dark:bg-slate-700/50 rounded-lg border-l-4 border-blue-500 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 text-blue-500 text-sm font-semibold mb-0.5">
-                            {editingMessage ? <Edit2 size={14}/> : <Reply size={14}/>}
-                            <span>{editingMessage ? 'Редактирование' : `Ответ ${replyingTo ? getSenderName(replyingTo.senderId) : 'пользователю'}`}</span>
+        
+        {isBlocked ? (
+            <div className="max-w-3xl mx-auto flex justify-center">
+                <button 
+                    onClick={() => onBlockUser?.(contact.id, false)}
+                    className="w-full py-3 bg-white dark:bg-slate-800 text-slate-800 dark:text-white uppercase tracking-widest text-sm font-bold border-t border-b border-gray-100 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors"
+                >
+                    РАЗБЛОКИРОВАТЬ
+                </button>
+            </div>
+        ) : (
+            <div className="max-w-3xl mx-auto">
+                {(replyingTo || editingMessage) && (
+                    <div className="flex items-center justify-between mb-2 px-4 py-2 bg-gray-50 dark:bg-slate-700/50 rounded-lg border-l-4 border-blue-500 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 text-blue-500 text-sm font-semibold mb-0.5">
+                                {editingMessage ? <Edit2 size={14}/> : <Reply size={14}/>}
+                                <span>{editingMessage ? 'Редактирование' : `Ответ ${replyingTo ? getSenderName(replyingTo.senderId) : 'пользователю'}`}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                {editingMessage ? editingMessage.text : replyingTo?.text}
+                            </p>
                         </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {editingMessage ? editingMessage.text : replyingTo?.text}
-                        </p>
-                    </div>
-                    <button 
-                        onClick={() => { setReplyingTo(null); setEditingMessage(null); setInputValue(''); }}
-                        className="p-1 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-full text-gray-400 btn-press"
-                    >
-                        <X size={16} />
-                    </button>
-                </div>
-            )}
-
-            <div className="flex items-end gap-2 relative">
-            
-            {selectedFile && (
-                <div className="absolute bottom-full left-0 mb-3 ml-12 bg-white dark:bg-slate-800 p-2 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 flex items-start gap-3 animate-pop-in origin-bottom-left">
-                    {previewUrl ? (
-                        <img src={previewUrl} alt="Preview" className="w-16 h-16 object-cover rounded-md" />
-                    ) : (
-                        <div className="w-16 h-16 bg-gray-100 dark:bg-slate-700 rounded-md flex items-center justify-center">
-                            <FileIcon size={24} className="text-gray-400" />
-                        </div>
-                    )}
-                    <div className="max-w-[150px]">
-                        <p className="text-sm font-medium truncate text-slate-700 dark:text-slate-200">{selectedFile.name}</p>
-                        <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} КБ</p>
-                    </div>
-                    <button 
-                        onClick={() => { setSelectedFile(null); setPreviewUrl(null); }}
-                        className="text-gray-400 hover:text-red-500 btn-press"
-                    >
-                        <X size={16} />
-                    </button>
-                </div>
-            )}
-
-            {!isRecording ? (
-                <>
-                    <div className="relative attach-trigger">
                         <button 
-                            onClick={(e) => { e.stopPropagation(); setShowAttachMenu(!showAttachMenu); setShowEmojiPicker(false); }}
-                            className={`p-2 transition-all rounded-full btn-press ${showAttachMenu ? 'bg-gray-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rotate-45' : 'text-gray-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                            onClick={() => { setReplyingTo(null); setEditingMessage(null); setInputValue(''); }}
+                            className="p-1 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-full text-gray-400 btn-press"
                         >
-                            <Paperclip size={20} />
+                            <X size={16} />
                         </button>
-                        {showAttachMenu && (
-                            <div className="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-gray-200 dark:border-slate-700 overflow-hidden py-1 z-20 animate-pop-in origin-bottom-left">
-                                <button 
-                                    onClick={() => imageInputRef.current?.click()}
-                                    className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
-                                        <ImageIcon size={18} />
-                                    </div>
-                                    <span className="text-sm font-medium">Фото или видео</span>
-                                </button>
-                                <button 
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
-                                        <FileIcon size={18} />
-                                    </div>
-                                    <span className="text-sm font-medium">Файл</span>
-                                </button>
-                                <button 
-                                    onClick={handleLocationClick}
-                                    className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
-                                        <MapPin size={18} />
-                                    </div>
-                                    <span className="text-sm font-medium">Геолокация</span>
-                                </button>
+                    </div>
+                )}
+
+                <div className="flex items-end gap-2 relative">
+                
+                {selectedFile && (
+                    <div className="absolute bottom-full left-0 mb-3 ml-12 bg-white dark:bg-slate-800 p-2 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 flex items-start gap-3 animate-pop-in origin-bottom-left">
+                        {previewUrl ? (
+                            <img src={previewUrl} alt="Preview" className="w-16 h-16 object-cover rounded-md" />
+                        ) : (
+                            <div className="w-16 h-16 bg-gray-100 dark:bg-slate-700 rounded-md flex items-center justify-center">
+                                <FileIcon size={24} className="text-gray-400" />
                             </div>
                         )}
+                        <div className="max-w-[150px]">
+                            <p className="text-sm font-medium truncate text-slate-700 dark:text-slate-200">{selectedFile.name}</p>
+                            <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} КБ</p>
+                        </div>
+                        <button 
+                            onClick={() => { setSelectedFile(null); setPreviewUrl(null); }}
+                            className="text-gray-400 hover:text-red-500 btn-press"
+                        >
+                            <X size={16} />
+                        </button>
                     </div>
-                    
-                    <div className="flex-1 bg-gray-50 dark:bg-slate-700/50 rounded-2xl border border-gray-200 dark:border-slate-600 focus-within:ring-2 focus-within:ring-blue-100 dark:focus-within:ring-blue-900 focus-within:border-blue-300 dark:focus-within:border-blue-500 input-transition flex items-end">
-                        <textarea
-                            ref={inputRef}
-                            value={inputValue}
-                            onChange={handleInputChange}
-                            onKeyDown={handleKeyDown}
-                            placeholder={contact.type === 'channel' ? "Опубликовать в канал..." : (selectedFile ? "Добавить подпись..." : "Написать сообщение...")}
-                            rows={1}
-                            className="w-full bg-transparent border-none focus:ring-0 resize-none py-3 px-4 text-slate-800 dark:text-white placeholder-gray-400 max-h-32 min-h-[44px] text-base"
-                            style={{ height: 'auto', overflow: 'hidden' }}
-                            onInput={(e) => {
-                                const target = e.target as HTMLTextAreaElement;
-                                target.style.height = 'auto';
-                                target.style.height = `${target.scrollHeight}px`;
-                            }}
-                        />
-                        
-                        <div className="relative emoji-trigger">
+                )}
+
+                {!isRecording ? (
+                    <>
+                        <div className="relative attach-trigger">
                             <button 
-                                onClick={(e) => { e.stopPropagation(); setShowEmojiPicker(!showEmojiPicker); setShowAttachMenu(false); }}
-                                className={`p-3 transition-colors rounded-full btn-press ${showEmojiPicker ? 'text-blue-500' : 'text-gray-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                onClick={(e) => { e.stopPropagation(); setShowAttachMenu(!showAttachMenu); setShowEmojiPicker(false); }}
+                                className={`p-2 transition-all rounded-full btn-press ${showAttachMenu ? 'bg-gray-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rotate-45' : 'text-gray-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
                             >
-                                <Smile size={20} />
+                                <Paperclip size={20} />
                             </button>
-                            {showEmojiPicker && (
-                            <EmojiPicker 
-                                    onSelectEmoji={(emoji) => setInputValue(prev => prev + emoji)} 
-                                    onSelectSticker={(url) => {
-                                        onSendSticker(url);
-                                        setShowEmojiPicker(false);
-                                    }}
-                            />
+                            {showAttachMenu && (
+                                <div className="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-gray-200 dark:border-slate-700 overflow-hidden py-1 z-20 animate-pop-in origin-bottom-left">
+                                    <button 
+                                        onClick={() => imageInputRef.current?.click()}
+                                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
+                                            <ImageIcon size={18} />
+                                        </div>
+                                        <span className="text-sm font-medium">Фото или видео</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
+                                            <FileIcon size={18} />
+                                        </div>
+                                        <span className="text-sm font-medium">Файл</span>
+                                    </button>
+                                    <button 
+                                        onClick={handleLocationClick}
+                                        className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center">
+                                            <MapPin size={18} />
+                                        </div>
+                                        <span className="text-sm font-medium">Геолокация</span>
+                                    </button>
+                                </div>
                             )}
                         </div>
-                    </div>
+                        
+                        <div className="flex-1 bg-gray-50 dark:bg-slate-700/50 rounded-2xl border border-gray-200 dark:border-slate-600 focus-within:ring-2 focus-within:ring-blue-100 dark:focus-within:ring-blue-900 focus-within:border-blue-300 dark:focus-within:border-blue-500 input-transition flex items-end">
+                            <textarea
+                                ref={inputRef}
+                                value={inputValue}
+                                onChange={handleInputChange}
+                                onKeyDown={handleKeyDown}
+                                placeholder={contact.type === 'channel' ? "Опубликовать в канал..." : (selectedFile ? "Добавить подпись..." : "Написать сообщение...")}
+                                rows={1}
+                                className="w-full bg-transparent border-none focus:ring-0 outline-none resize-none py-3 px-4 text-slate-800 dark:text-white placeholder-gray-400 max-h-32 min-h-[44px] text-base"
+                                style={{ height: 'auto', overflow: 'hidden' }}
+                                onInput={(e) => {
+                                    const target = e.target as HTMLTextAreaElement;
+                                    target.style.height = 'auto';
+                                    target.style.height = `${target.scrollHeight}px`;
+                                }}
+                            />
+                            
+                            <div className="relative emoji-trigger">
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setShowEmojiPicker(!showEmojiPicker); setShowAttachMenu(false); }}
+                                    className={`p-3 transition-colors rounded-full btn-press ${showEmojiPicker ? 'text-blue-500' : 'text-gray-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                >
+                                    <Smile size={20} />
+                                </button>
+                                {showEmojiPicker && (
+                                <EmojiPicker 
+                                        onSelectEmoji={(emoji) => setInputValue(prev => prev + emoji)} 
+                                        onSelectSticker={(url) => {
+                                            onSendSticker(url);
+                                            setShowEmojiPicker(false);
+                                        }}
+                                />
+                                )}
+                            </div>
+                        </div>
 
-                    <button 
-                        onClick={showMic ? startRecording : handleSend}
-                        className={`p-3 rounded-full shadow-md text-white transition-all transform hover:scale-105 active:scale-95 flex-shrink-0 flex items-center justify-center ${
-                            showMic 
-                                ? 'bg-blue-500 hover:bg-blue-600' 
-                                : 'bg-blue-600 hover:bg-blue-700'
-                        }`}
-                    >
-                        {showMic ? <Mic size={20} /> : (editingMessage ? <Check size={20} /> : <Send size={20} className={inputValue.trim() || selectedFile ? 'ml-0.5' : ''} />)}
-                    </button>
-                </>
-            ) : (
-                <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-between px-2 animate-in fade-in duration-200">
-                    <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                        <span className="text-slate-800 dark:text-white font-mono font-medium">
-                            {formatTime(recordingDuration)}
-                        </span>
-                        <span className="text-sm text-gray-400">Запись...</span>
-                    </div>
-                    <div className="flex items-center gap-2">
                         <button 
-                            onClick={() => stopRecording(false)}
-                            className="p-3 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors btn-press"
+                            onClick={showMic ? startRecording : handleSend}
+                            className={`p-3 rounded-full shadow-md text-white transition-all transform hover:scale-105 active:scale-95 flex-shrink-0 flex items-center justify-center ${
+                                showMic 
+                                    ? 'bg-blue-500 hover:bg-blue-600' 
+                                    : 'bg-blue-600 hover:bg-blue-700'
+                            }`}
                         >
-                            <Trash2 size={20} />
+                            {showMic ? <Mic size={20} /> : (editingMessage ? <Check size={20} /> : <Send size={20} className={inputValue.trim() || selectedFile ? 'ml-0.5' : ''} />)}
                         </button>
-                        <button 
-                            onClick={() => stopRecording(true)}
-                            className="p-3 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors shadow-md btn-press"
-                        >
-                            <Send size={20} className="ml-0.5" />
-                        </button>
+                    </>
+                ) : (
+                    <div className="flex-1 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-between px-2 animate-in fade-in duration-200">
+                        <div className="flex items-center gap-3">
+                            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                            <span className="text-slate-800 dark:text-white font-mono font-medium">
+                                {formatTime(recordingDuration)}
+                            </span>
+                            <span className="text-sm text-gray-400">Запись...</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button 
+                                onClick={() => stopRecording(false)}
+                                className="p-3 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors btn-press"
+                            >
+                                <Trash2 size={20} />
+                            </button>
+                            <button 
+                                onClick={() => stopRecording(true)}
+                                className="p-3 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors shadow-md btn-press"
+                            >
+                                <Send size={20} className="ml-0.5" />
+                            </button>
+                        </div>
                     </div>
+                )}
                 </div>
-            )}
             </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -1,8 +1,8 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Contact, Message } from '../types';
 import Avatar from './Avatar';
-import { X, Mail, Bell, Image as ImageIcon, FileText, Link as LinkIcon, Users, ChevronRight, Shield, UserX, Clock, Brush, Ban, Heart, Link, Activity, BellOff, Info, Phone, Video, Search, MoreHorizontal, MapPin, Calendar, Cake } from 'lucide-react';
+import { X, Mail, Bell, Image as ImageIcon, FileText, Link as LinkIcon, Users, ChevronRight, Shield, UserX, Clock, Brush, Ban, Heart, Link, Activity, BellOff, Info, Phone, Video, Search, MoreHorizontal, MapPin, Calendar, Cake, Lock, Forward, Eraser } from 'lucide-react';
 import { SAVED_MESSAGES_ID } from '../constants';
 
 interface ProfileInfoProps {
@@ -11,6 +11,13 @@ interface ProfileInfoProps {
   onClose: () => void;
   messages: Message[];
   onToggleMute?: (contactId: string) => void;
+  onBlockUser?: (contactId: string, isBlocked: boolean) => void;
+  onClearHistory?: (contactId: string) => void;
+  onSetAutoDelete?: (contactId: string, seconds: number) => void;
+  onShareContact?: (contactId: string) => void;
+  onChangeWallpaper?: () => void;
+  onCreateSecretChat?: (contactId: string) => void;
+  isBlocked?: boolean;
 }
 
 // Telegram-like colors mapping
@@ -26,9 +33,34 @@ const PROFILE_COLORS: Record<string, string> = {
     default: 'bg-gradient-to-br from-slate-500 to-slate-600'
 };
 
-const ProfileInfo: React.FC<ProfileInfoProps> = ({ contact, isOpen, onClose, messages, onToggleMute }) => {
+const ProfileInfo: React.FC<ProfileInfoProps> = ({ 
+    contact, 
+    isOpen, 
+    onClose, 
+    messages, 
+    onToggleMute,
+    onBlockUser,
+    onClearHistory,
+    onSetAutoDelete,
+    onShareContact,
+    onChangeWallpaper,
+    onCreateSecretChat,
+    isBlocked = false
+}) => {
   const [activeTab, setActiveTab] = useState<'media' | 'files' | 'links'>('media');
   const [showMembers, setShowMembers] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+      const handleClickOutside = (event: MouseEvent) => {
+          if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+              setShowMoreMenu(false);
+          }
+      };
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -110,12 +142,53 @@ const ProfileInfo: React.FC<ProfileInfoProps> = ({ contact, isOpen, onClose, mes
               </div>
               <span className="text-[10px] text-white/90 font-medium">Поиск</span>
           </button>
-          <button className="flex flex-col items-center gap-1 min-w-[64px] group">
-              <div className="w-10 h-10 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md flex items-center justify-center transition-colors shadow-sm border border-white/10">
-                  <MoreHorizontal size={20} className="text-white" />
-              </div>
-              <span className="text-[10px] text-white/90 font-medium">Ещё</span>
-          </button>
+          <div className="relative" ref={moreMenuRef}>
+            <button 
+                onClick={() => setShowMoreMenu(!showMoreMenu)}
+                className="flex flex-col items-center gap-1 min-w-[64px] group"
+            >
+                <div className="w-10 h-10 rounded-xl bg-white/20 hover:bg-white/30 backdrop-blur-md flex items-center justify-center transition-colors shadow-sm border border-white/10">
+                    <MoreHorizontal size={20} className="text-white" />
+                </div>
+                <span className="text-[10px] text-white/90 font-medium">Ещё</span>
+            </button>
+            {showMoreMenu && (
+                <div className="absolute top-full right-0 mt-2 w-56 bg-slate-800/95 backdrop-blur-xl rounded-xl shadow-2xl border border-white/10 py-1 z-50 animate-dropdown origin-top-right overflow-hidden">
+                    <button onClick={() => { setShowMoreMenu(false); onChangeWallpaper?.(); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-white/10 text-white transition-colors border-b border-white/10">
+                        <span className="font-medium text-sm">Изменить обои</span>
+                        <ImageIcon size={18} />
+                    </button>
+                    
+                    {!contact.isSecret && (
+                        <button onClick={() => { setShowMoreMenu(false); onClose(); onCreateSecretChat?.(contact.id); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-white/10 text-white transition-colors border-b border-white/10">
+                            <span className="font-medium text-sm">Начать секретный чат</span>
+                            <Lock size={18} className="text-green-400" />
+                        </button>
+                    )}
+
+                    <button onClick={() => { setShowMoreMenu(false); onShareContact?.(contact.id); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-white/10 text-white transition-colors border-b border-white/10">
+                        <span className="font-medium text-sm">Отправить контакт</span>
+                        <Forward size={18} />
+                    </button>
+                    
+                    <button onClick={() => { setShowMoreMenu(false); onSetAutoDelete?.(contact.id, 0); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-white/10 text-white transition-colors">
+                        <span className="font-medium text-sm flex items-center gap-2">
+                            Автоудаление
+                            {contact.autoDelete && contact.autoDelete > 0 && <span className="text-[10px] bg-white/20 px-1.5 rounded">Вкл</span>}
+                        </span>
+                        <Clock size={18} />
+                    </button>
+                    <button onClick={() => { setShowMoreMenu(false); onClearHistory?.(contact.id); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-white/10 text-white transition-colors">
+                        <span className="font-medium text-sm">Удалить переписку</span>
+                        <Eraser size={18} />
+                    </button>
+                    <button onClick={() => { setShowMoreMenu(false); onBlockUser?.(contact.id, !isBlocked); }} className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors">
+                        <span className="font-medium text-sm">{isBlocked ? 'Разблокировать' : 'Заблокировать'}</span>
+                        <Ban size={18} />
+                    </button>
+                </div>
+            )}
+          </div>
       </div>
   );
 
@@ -190,11 +263,12 @@ const ProfileInfo: React.FC<ProfileInfoProps> = ({ contact, isOpen, onClose, mes
                         </div>
                         
                         <div className="text-center z-10">
-                            <h2 className="text-2xl font-bold text-white flex items-center justify-center gap-1.5 drop-shadow-sm">
+                            <h2 className={`text-2xl font-bold text-white flex items-center justify-center gap-1.5 drop-shadow-sm ${contact.isSecret ? 'text-green-200' : ''}`}>
                                 {contact.name}
                                 {contact.statusEmoji && (
                                     <span className="text-2xl" title="Статус">{contact.statusEmoji}</span>
                                 )}
+                                {contact.isSecret && <Lock size={20} className="text-green-300" />}
                             </h2>
                             <p className="text-sm text-white/80 font-medium mt-1 drop-shadow-sm">
                                 {isUser && (contact.isOnline ? 'в сети' : formatLastSeen(contact.lastSeen))}

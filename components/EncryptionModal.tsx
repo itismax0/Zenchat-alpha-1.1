@@ -34,7 +34,7 @@ const EncryptionModal: React.FC<EncryptionModalProps> = ({ isOpen, onClose, cont
         <div className="px-6 py-4 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center">
             <h3 className="text-lg font-semibold text-slate-800 dark:text-white flex items-center gap-2">
                 <Lock size={18} className="text-green-500" />
-                Шифрование
+                Секретный чат
             </h3>
             <button onClick={onClose} className="text-gray-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
                 <X size={20} />
@@ -55,16 +55,15 @@ const EncryptionModal: React.FC<EncryptionModalProps> = ({ isOpen, onClose, cont
             </div>
 
             <h4 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
-                Сквозное шифрование
+                Ключ шифрования
             </h4>
             
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 leading-relaxed">
-                Сообщения в этом чате с <strong>{contact.name}</strong> защищены сквозным шифрованием (E2EE). Никто посторонний, даже ZenChat, не может их прочитать.
+                Сообщения в этом секретном чате с <strong>{contact.name}</strong> используют конечное шифрование (E2EE).
             </p>
 
             {/* Safety Number Grid */}
             <div className="w-full bg-gray-50 dark:bg-slate-900/50 rounded-xl p-4 border border-gray-100 dark:border-slate-700 mb-6">
-                <p className="text-xs text-gray-400 uppercase tracking-widest mb-3 font-semibold">Ключ шифрования</p>
                 <div className="grid grid-cols-2 gap-y-4 gap-x-8 font-mono text-xl text-slate-700 dark:text-slate-200 tracking-wider">
                     {safetyNumbers.map((block, i) => (
                         <span key={i}>{block}</span>
@@ -73,7 +72,7 @@ const EncryptionModal: React.FC<EncryptionModalProps> = ({ isOpen, onClose, cont
             </div>
             
             <p className="text-xs text-gray-400">
-                Если этот код совпадает на устройстве {contact.name}, ваши звонки и сообщения на 100% безопасны.
+                Сверьте это изображение с устройством собеседника, чтобы убедиться в безопасности.
             </p>
         </div>
 
@@ -83,7 +82,7 @@ const EncryptionModal: React.FC<EncryptionModalProps> = ({ isOpen, onClose, cont
                 onClick={onClose}
                 className="w-full py-3 bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl text-slate-700 dark:text-white font-medium hover:bg-gray-50 dark:hover:bg-slate-600 transition-colors"
             >
-                Понятно
+                Закрыть
             </button>
         </div>
       </div>

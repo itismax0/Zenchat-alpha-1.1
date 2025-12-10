@@ -3,8 +3,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
 import { CURRENT_USER_ID } from '../constants';
 import ReactMarkdown from 'react-markdown';
-import { FileText, Download, MapPin, Play, Pause, Check, CheckCheck, Clock, Pin, Edit2, Forward } from 'lucide-react';
+import { FileText, Download, MapPin, Play, Pause, Check, CheckCheck, Clock, Pin, Edit2, Forward, User, UserPlus } from 'lucide-react';
 import './MessageBubble.css';
+import Avatar from './Avatar';
 
 interface MessageBubbleProps {
   message: Message;
@@ -31,6 +32,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   const isFile = message.type === 'file';
   const isLocation = message.type === 'location';
   const isVoice = message.type === 'voice';
+  const isContact = message.type === 'contact';
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -259,6 +261,25 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             </div>
         )}
 
+        {/* Contact Card */}
+        {isContact && message.contactInfo && (
+            <div className="flex items-center gap-3 min-w-[200px] pb-1">
+                <div className="relative">
+                    <Avatar 
+                        src={message.contactInfo.avatarUrl} 
+                        alt={message.contactInfo.name} 
+                        size="md" 
+                    />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{message.contactInfo.name}</p>
+                    <p className={`text-xs truncate ${isMe ? 'text-blue-100' : 'text-gray-500 dark:text-gray-400'}`}>
+                        {message.contactInfo.phoneNumber || (message.contactInfo.username ? `@${message.contactInfo.username}` : 'Контакт')}
+                    </p>
+                </div>
+            </div>
+        )}
+
         {/* Image Attachment */}
         {isImage && message.attachmentUrl && (
           <div className="mb-2 rounded-lg overflow-hidden relative group/image">
@@ -353,8 +374,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           </div>
         )}
         
+        {/* Contact Action Button */}
+        {isContact && (
+            <div className="mt-2 pt-2 border-t border-white/20 dark:border-slate-500/30">
+                <button className={`w-full py-1.5 rounded text-sm font-medium transition-colors ${isMe ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-blue-50 dark:bg-slate-600 text-blue-600 dark:text-white hover:bg-blue-100 dark:hover:bg-slate-500'}`}>
+                    Написать сообщение
+                </button>
+            </div>
+        )}
+        
         {/* Info Footer */}
         <div className={`text-[10px] mt-1 opacity-80 flex items-center gap-1 ${isMe ? 'text-blue-100 justify-end' : 'text-slate-400 dark:text-slate-300 justify-start'}`}>
+          {message.isEncrypted && <Lock size={8} className="opacity-70" />}
           {message.isEdited && <span className="flex items-center gap-0.5"><Edit2 size={8}/> изм.</span>}
           <span>{formatTime(message.timestamp)}</span>
           {renderStatus()}

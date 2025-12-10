@@ -15,20 +15,10 @@ interface SettingsModalProps {
   devices: DeviceSession[];
   onTerminateSessions: () => void;
   onLogout: () => void;
+  initialTab?: 'main' | 'appearance';
 }
 
 type SettingsView = 'main' | 'notifications' | 'privacy' | 'appearance' | 'devices' | 'edit_profile' | 'customize_profile';
-
-const BG_COLORS = [
-    { id: 'default', light: 'bg-[#f8fafc]', dark: 'bg-slate-900' },
-    { id: 'blue', light: 'bg-blue-50', dark: 'bg-blue-950' },
-    { id: 'green', light: 'bg-green-50', dark: 'bg-green-950' },
-    { id: 'pink', light: 'bg-pink-50', dark: 'bg-pink-950' },
-    { id: 'slate', light: 'bg-slate-200', dark: 'bg-slate-800' },
-    { id: 'yellow', light: 'bg-yellow-50', dark: 'bg-yellow-950' },
-    { id: 'purple', light: 'bg-purple-50', dark: 'bg-purple-950' },
-    { id: 'red', light: 'bg-red-50', dark: 'bg-red-950' },
-];
 
 const PROFILE_COLORS = [
     { id: 'red', class: 'bg-gradient-to-br from-red-500 to-red-600' },
@@ -51,7 +41,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     onUpdateSettings,
     devices,
     onTerminateSessions,
-    onLogout
+    onLogout,
+    initialTab = 'main'
 }) => {
   const [view, setView] = useState<SettingsView>('main');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,7 +70,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   // Reset view on open
   useEffect(() => {
     if (isOpen) {
-        setView('main');
+        setView(initialTab);
         setEditName(userProfile.name);
         setEditUsername(userProfile.username || '');
         setEditBio(userProfile.bio || '');
@@ -92,7 +83,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         setSaveError('');
         setShowQr(false);
     }
-  }, [isOpen, userProfile]);
+  }, [isOpen, userProfile, initialTab]);
 
   if (!isOpen) return null;
 
@@ -109,6 +100,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleSaveProfile = async () => {
+      // Basic Client-Side Validation
+      if (editUsername) {
+          const usernameRegex = /^[a-zA-Z0-9_]{3,25}$/;
+          if (!usernameRegex.test(editUsername)) {
+              setSaveError('Юзернейм: 3-25 символов (латиница, цифры, _).');
+              return;
+          }
+      }
+
       setIsSaving(true);
       setSaveError('');
       try {
@@ -596,19 +596,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 className="w-full accent-blue-500 h-2 bg-gray-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
                             />
                         </div>
-
-                        <div>
-                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3 ml-1">Фон чата</label>
-                             <div className="grid grid-cols-4 gap-3">
-                                 {BG_COLORS.map((bg) => (
-                                     <button
-                                        key={bg.id}
-                                        onClick={() => updateNestedSetting('appearance', 'chatBackground', bg.id)}
-                                        className={`w-full aspect-square rounded-full border-2 transition-all ${bg.light} ${bg.dark} ${settings.appearance.chatBackground === bg.id ? 'border-blue-500 scale-110 shadow-lg' : 'border-transparent hover:scale-105'}`}
-                                     />
-                                 ))}
-                             </div>
-                        </div>
+                        
+                        {/* Background selector removed as per requirement */}
                     </div>
                 </div>
             </div>

@@ -6,6 +6,9 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 
 // Define __dirname for ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -16,13 +19,63 @@ const server = createServer(app);
 
 // Environment
 const PORT = process.env.PORT || 3001;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/zenchat_local'; // Fallback for local testing
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/zenchat_local';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod';
+
+// --- Security: Trust Proxy ---
+app.set('trust proxy', 1);
+
+// --- HTTPS Redirect Middleware ---
+app.use((req, res, next) => {
+    if ((process.env.NODE_ENV === 'production' || process.env.RENDER) && req.headers['x-forwarded-proto'] !== 'https') {
+        return res.redirect(`https://${req.headers.host}${req.url}`);
+    }
+    next();
+});
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // Increase payload limit for images
+app.use(express.json({ limit: '50mb' }));
 
-// --- Socket.io Setup (Early Init to use in routes) ---
+// --- Rate Limiting ---
+const apiLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000, 
+	max: 300, 
+	standardHeaders: true,
+	legacyHeaders: false,
+    message: { error: 'Слишком много запросов с вашего IP, попробуйте позже.' }
+});
+app.use('/api/', apiLimiter);
+
+const authLimiter = rateLimit({
+	windowMs: 60 * 60 * 1000, 
+	max: 20, 
+	standardHeaders: true,
+	legacyHeaders: false,
+    message: { error: 'Слишком много попыток входа. Попробуйте через час.' }
+});
+app.use('/api/register', authLimiter);
+app.use('/api/login', authLimiter);
+
+
+// --- Security: Auth Middleware ---
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) return res.status(401).json({ error: 'Access denied' });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token' });
+        req.user = user;
+        next();
+    });
+};
+
+// --- PRESENCE MANAGEMENT ---
+const userSocketMap = new Map();
+
+// --- Socket.io Setup ---
 const io = new Server(server, {
     maxHttpBufferSize: 1e8,
     cors: {
@@ -31,36 +84,46 @@ const io = new Server(server, {
     }
 });
 
-// Attach io to request for use in API routes
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (token) {
+        jwt.verify(token, JWT_SECRET, (err, decoded) => {
+            if (!err) {
+                socket.userId = decoded.id;
+            }
+        });
+    }
+    next();
+});
+
 app.use((req, res, next) => {
     req.io = io;
     next();
 });
 
-// --- MongoDB Connection ---
-if (MONGO_URI.includes('<password>')) {
-    console.error('================================================================');
-    console.error('❌ CRITICAL ERROR: Invalid MONGO_URI');
-    console.error('You forgot to replace <password> with your actual password in the connection string.');
-    console.error('Please go to Render Environment Variables and fix MONGO_URI.');
-    console.error('It should look like: mongodb+srv://user:mypassword123@...');
-    console.error('================================================================');
+// --- MongoDB ---
+if (process.env.NODE_ENV === 'production' && !process.env.MONGO_URI) {
+    console.error('❌ FATAL ERROR: MONGO_URI is missing.');
+    process.exit(1);
 }
 
 const connectDB = async () => {
     try {
+        console.log(`🔌 Connecting to MongoDB...`);
         await mongoose.connect(MONGO_URI, {
             serverSelectionTimeoutMS: 5000,
+            autoIndex: process.env.NODE_ENV !== 'production',
+            family: 4
         });
         console.log('✅ Connected to MongoDB');
     } catch (err) {
         console.error('❌ MongoDB Connection Error:', err.message);
+        if (process.env.NODE_ENV === 'production') process.exit(1);
     }
 };
 connectDB();
 
-// --- Mongoose Schemas ---
-
+// --- Schemas ---
 const UserSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true }, 
     name: String,
@@ -70,20 +133,17 @@ const UserSchema = new mongoose.Schema({
     avatarUrl: String,
     bio: String,
     phoneNumber: String,
-    address: String,   // New field
-    birthDate: String, // New field
-    
-    // Customization
+    address: String,
+    birthDate: String,
     statusEmoji: String,
     profileColor: String,
     profileBackgroundEmoji: String,
-    
+    blockedUsers: [{ type: String }], // Array of blocked IDs
     contacts: { type: Array, default: [] },
     chatHistory: { type: Object, default: {} },
     settings: { type: Object, default: {} },
     devices: { type: Array, default: [] }
 });
-
 const User = mongoose.model('User', UserSchema);
 
 const GroupSchema = new mongoose.Schema({
@@ -102,454 +162,401 @@ const GroupSchema = new mongoose.Schema({
     chatHistory: { type: Array, default: [] },
     createdAt: { type: Number, default: Date.now }
 });
-
 const Group = mongoose.model('Group', GroupSchema);
 
-// --- Routes ---
-
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
-});
-
-// Register
+// Standard API Routes
 app.post('/api/register', async (req, res) => {
     try {
         const { name, email, password } = req.body;
-        
         const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ error: 'Email already exists' });
-        }
+        if (existingUser) return res.status(400).json({ error: 'Email already exists' });
+
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        const newUserId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
         const newUser = new User({
-            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+            id: newUserId,
             name,
             email,
-            password,
+            password: hashedPassword,
             avatarUrl: '',
         });
-
         await newUser.save();
-
+        const token = jwt.sign({ id: newUserId, email }, JWT_SECRET, { expiresIn: '7d' });
         const { password: _, _id, __v, ...userProfile } = newUser.toObject();
-        res.json(userProfile);
+        res.json({ ...userProfile, token });
     } catch (e) {
-        console.error("Registration Error:", e);
-        const msg = e.code === 11000 ? 'Username or Email already taken' : 'Server error during registration';
-        res.status(500).json({ error: msg });
+        res.status(500).json({ error: e.code === 11000 ? 'Username/Email taken' : 'Error' });
     }
 });
 
-// Login
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
         const user = await User.findOne({ email });
+        if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid email or password' });
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+             // Legacy fallback for plain text passwords
+             if (user.password === password) {
+                 const salt = await bcrypt.genSalt(10);
+                 user.password = await bcrypt.hash(password, salt);
+                 await user.save();
+             } else {
+                 return res.status(401).json({ error: 'Invalid email or password' });
+             }
         }
 
-        if (user.password !== password) {
-             return res.status(401).json({ error: 'Invalid email or password' });
-        }
-
+        const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
         const { password: _, _id, __v, ...userProfile } = user.toObject();
-        res.json(userProfile);
+        res.json({ ...userProfile, token });
     } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Server error during login' });
+        res.status(500).json({ error: 'Login failed' });
     }
 });
 
-// Update Profile
-app.post('/api/users/:id', async (req, res) => {
+// API Routes (Profile, Groups, Sync)
+app.post('/api/users/:id', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
+        if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
         const updates = req.body;
-
-        if (updates.username) {
-            const taken = await User.findOne({ username: updates.username, id: { $ne: id } });
-            if (taken) return res.status(400).json({ error: 'Username taken' });
-        }
-
-        const user = await User.findOneAndUpdate(
-            { id: id },
-            { $set: updates },
-            { new: true }
-        );
-
+        const user = await User.findOneAndUpdate({ id: id }, { $set: updates }, { new: true });
         if (!user) return res.status(404).json({ error: 'User not found' });
-
-        if (updates.name || updates.avatarUrl) {
-            await User.updateMany(
-                { "contacts.id": id },
-                { 
-                    $set: { 
-                        "contacts.$.name": user.name,
-                        "contacts.$.avatarUrl": user.avatarUrl
-                    } 
-                }
-            );
-        }
-
+        
         // Notify friends about profile update
         const friends = await User.find({ "contacts.id": id }).select('id');
         friends.forEach(friend => {
-             req.io.to(friend.id).emit('contact_update', {
-                 id: user.id,
-                 name: user.name,
-                 avatarUrl: user.avatarUrl,
-                 bio: user.bio,
-                 username: user.username,
-                 phoneNumber: user.phoneNumber,
-                 address: user.address,
-                 birthDate: user.birthDate,
-                 statusEmoji: user.statusEmoji,
-                 profileColor: user.profileColor,
-                 profileBackgroundEmoji: user.profileBackgroundEmoji
-             });
+             req.io.to(friend.id).emit('contact_update', { id: user.id, ...updates });
         });
-
         const { password: _, _id, __v, ...userProfile } = user.toObject();
         res.json(userProfile);
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: 'Failed to update profile' });
-    }
+    } catch (e) { res.status(500).json({ error: 'Update failed' }); }
 });
 
-// Create Group
-app.post('/api/groups', async (req, res) => {
-    try {
-        const { name, type, members, avatarUrl, ownerId, settings } = req.body;
-        const allMembers = Array.from(new Set([...members, ownerId]));
+// --- NEW APIs: Block, Clear, AutoDelete ---
 
+// Block/Unblock
+app.post('/api/users/:id/block', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { targetId, isBlocked } = req.body;
+        
+        if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
+
+        const updateOp = isBlocked 
+            ? { $addToSet: { blockedUsers: targetId } }
+            : { $pull: { blockedUsers: targetId } };
+
+        const user = await User.findOneAndUpdate({ id }, updateOp, { new: true });
+        res.json({ blockedUsers: user.blockedUsers });
+    } catch (e) { res.status(500).json({ error: 'Block failed' }); }
+});
+
+// Clear History
+app.post('/api/users/:id/clear', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { targetId } = req.body;
+        if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
+
+        // Clear history in user document
+        await User.updateOne({ id }, { $set: { [`chatHistory.${targetId}`]: [] } });
+        
+        // Also update last message in contacts to empty
+        await User.updateOne(
+            { id: id, "contacts.id": targetId },
+            { $set: { "contacts.$.lastMessage": "", "contacts.$.lastMessageTime": Date.now() } }
+        );
+
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: 'Clear history failed' }); }
+});
+
+// Set Auto Delete
+app.post('/api/users/:id/autodelete', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { targetId, seconds } = req.body;
+        if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
+
+        await User.updateOne(
+            { id: id, "contacts.id": targetId },
+            { $set: { "contacts.$.autoDelete": seconds } }
+        );
+        
+        // Also update for the other user to keep sync (Telegram style)
+        await User.updateOne(
+            { id: targetId, "contacts.id": id },
+            { $set: { "contacts.$.autoDelete": seconds } }
+        );
+        
+        // Notify other user via socket
+        req.io.to(targetId).emit('contact_update', { id: id, autoDelete: seconds });
+
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: 'Auto-delete set failed' }); }
+});
+
+
+app.post('/api/groups', authenticateToken, async (req, res) => {
+    try {
+        const { name, type, members, avatarUrl, ownerId } = req.body;
         const newGroup = new Group({
-            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-            name,
-            type: type || 'group',
-            avatarUrl: avatarUrl || '',
-            members: allMembers,
-            admins: [ownerId],
-            ownerId,
-            settings: settings || {
-                historyVisible: true, 
-                sendMessages: true,
-                autoDeleteMessages: 0
-            },
-            chatHistory: [{
-                id: Date.now().toString(),
-                text: type === 'channel' ? 'Канал создан' : 'Группа создана',
-                senderId: ownerId,
-                timestamp: Date.now(),
-                status: 'read',
-                type: 'text'
-            }]
+            id: Date.now().toString(36),
+            name, type, avatarUrl, members: [...members, ownerId], admins: [ownerId], ownerId,
+            chatHistory: [{ id: Date.now().toString(), text: 'Created', senderId: ownerId, timestamp: Date.now(), status: 'read', type: 'text' }]
         });
-
         await newGroup.save();
-
-        const groupContact = {
-            id: newGroup.id,
-            name: newGroup.name,
-            avatarUrl: newGroup.avatarUrl,
-            type: newGroup.type,
-            lastMessage: type === 'channel' ? 'Канал создан' : 'Группа создана',
-            lastMessageTime: Date.now(),
-            unreadCount: 0,
-            membersCount: allMembers.length,
-            description: type === 'channel' ? 'Канал' : 'Группа'
-        };
-
-        allMembers.forEach(memberId => {
-            req.io.to(memberId).emit('new_chat', groupContact);
+        [...members, ownerId].forEach(mid => {
+            req.io.to(mid).emit('new_chat', { id: newGroup.id, name, type, avatarUrl });
         });
-
         res.json(newGroup);
-    } catch(e) {
-        console.error("Create Group Error:", e);
-        res.status(500).json({ error: 'Failed to create group' });
-    }
+    } catch (e) { res.status(500).json({ error: 'Group creation failed' }); }
 });
 
-// Search
-app.get('/api/users/search', async (req, res) => {
-    try {
-        const { query, currentUserId } = req.query;
-        if (!query) return res.json([]);
-
-        const regex = new RegExp(query, 'i');
-
-        const users = await User.find({
-            id: { $ne: currentUserId },
-            $or: [
-                { name: regex }, 
-                { username: regex },
-                { email: regex }
-            ]
-        }).select('id name username avatarUrl bio statusEmoji profileColor profileBackgroundEmoji').limit(20);
-
-        res.json(users);
-    } catch (e) {
-        res.status(500).json({ error: 'Search failed' });
-    }
-});
-
-// Sync Data
-app.get('/api/sync/:userId', async (req, res) => {
+app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
     try {
         const { userId } = req.params;
         const user = await User.findOne({ id: userId });
-
         if (!user) return res.status(404).json({ error: 'User not found' });
-
-        const { password: _, _id, __v, ...fullData } = user.toObject();
+        
+        let hydratedContacts = [];
+        for (let contact of user.contacts) {
+            if (contact.type === 'user' && contact.id !== 'saved-messages' && contact.id !== 'gemini-ai') {
+                const contactProfile = await User.findOne({ id: contact.id }).select('name avatarUrl bio username phoneNumber address birthDate statusEmoji profileColor profileBackgroundEmoji');
+                if (contactProfile) {
+                    const isOnline = userSocketMap.has(contact.id);
+                    hydratedContacts.push({
+                        ...contact,
+                        name: contactProfile.name,
+                        avatarUrl: contactProfile.avatarUrl,
+                        bio: contactProfile.bio,
+                        username: contactProfile.username,
+                        phoneNumber: contactProfile.phoneNumber,
+                        address: contactProfile.address,
+                        birthDate: contactProfile.birthDate,
+                        statusEmoji: contactProfile.statusEmoji,
+                        profileColor: contactProfile.profileColor,
+                        profileBackgroundEmoji: contactProfile.profileBackgroundEmoji,
+                        isOnline: isOnline
+                    });
+                    continue;
+                }
+            }
+            if (contact.type === 'group' || contact.type === 'channel') {
+                 const group = await Group.findOne({ id: contact.id });
+                 if (!group) {
+                     const actuallyUser = await User.findOne({ id: contact.id });
+                     if (actuallyUser) {
+                         contact.type = 'user';
+                         contact.name = actuallyUser.name;
+                         contact.avatarUrl = actuallyUser.avatarUrl;
+                     }
+                 }
+            }
+            hydratedContacts.push(contact);
+        }
 
         const groups = await Group.find({ members: userId });
-        
-        const groupContacts = await Promise.all(groups.map(async (g) => {
-            const memberUsers = await User.find({ id: { $in: g.members } }).select('id name avatarUrl');
-            const members = memberUsers.map(u => ({
-                id: u.id,
-                name: u.name,
-                avatarUrl: u.avatarUrl,
-                role: g.ownerId === u.id ? 'owner' : (g.admins.includes(u.id) ? 'admin' : 'member'),
-                lastSeen: 'недавно'
-            }));
-
-            const lastMsg = g.chatHistory.length > 0 ? g.chatHistory[g.chatHistory.length - 1] : null;
-
-            return {
-                id: g.id,
-                name: g.name,
-                avatarUrl: g.avatarUrl,
-                lastMessage: lastMsg ? (lastMsg.text || 'Вложение') : '',
-                lastMessageTime: lastMsg ? lastMsg.timestamp : g.createdAt,
-                unreadCount: 0,
-                isOnline: false,
-                type: g.type,
-                membersCount: g.members.length,
-                members: members,
-                settings: g.settings,
-                description: g.type === 'channel' ? 'Канал' : 'Группа'
-            };
+        const groupContacts = groups.map(g => ({
+            id: g.id, name: g.name, avatarUrl: g.avatarUrl, type: g.type,
+            lastMessage: g.chatHistory.slice(-1)[0]?.text || '',
+            unreadCount: 0,
+            membersCount: g.members.length
         }));
-
-        const userContacts = fullData.contacts || [];
-        const cleanUserContacts = userContacts.filter(c => c && (c.type === 'user' || c.id === 'saved-messages'));
         
-        // Hydrate user contacts with fresh profile data (Bio, Phone, Username, Address, BirthDate, Customization)
-        const hydratedUserContacts = await Promise.all(cleanUserContacts.map(async (c) => {
-            if (c.id === 'saved-messages' || c.id === 'gemini-ai') return c;
-            
-            const freshUser = await User.findOne({ id: c.id }).select('bio phoneNumber username address birthDate avatarUrl name statusEmoji profileColor profileBackgroundEmoji');
-            if (freshUser) {
-                return { 
-                    ...c, 
-                    bio: freshUser.bio, 
-                    phoneNumber: freshUser.phoneNumber, 
-                    username: freshUser.username,
-                    address: freshUser.address,    // New field synced
-                    birthDate: freshUser.birthDate, // New field synced
-                    avatarUrl: freshUser.avatarUrl || c.avatarUrl,
-                    name: freshUser.name || c.name,
-                    statusEmoji: freshUser.statusEmoji,
-                    profileColor: freshUser.profileColor,
-                    profileBackgroundEmoji: freshUser.profileBackgroundEmoji
-                };
-            }
-            return c;
-        }));
-
-        const finalContacts = [...groupContacts, ...hydratedUserContacts];
-
-        const combinedHistory = { ...fullData.chatHistory };
-        groups.forEach(g => {
-            combinedHistory[g.id] = g.chatHistory;
-        });
+        const fullHistory = { ...user.chatHistory };
+        groups.forEach(g => { fullHistory[g.id] = g.chatHistory; });
 
         res.json({
-            profile: {
-                id: fullData.id,
-                name: fullData.name,
-                email: fullData.email,
-                avatarUrl: fullData.avatarUrl,
-                username: fullData.username,
-                bio: fullData.bio,
-                phoneNumber: fullData.phoneNumber,
-                address: fullData.address,     // New field
-                birthDate: fullData.birthDate, // New field
-                statusEmoji: fullData.statusEmoji,
-                profileColor: fullData.profileColor,
-                profileBackgroundEmoji: fullData.profileBackgroundEmoji
-            },
-            contacts: finalContacts, 
-            chatHistory: combinedHistory,
-            settings: fullData.settings || {}, 
-            devices: fullData.devices || []
+            profile: { id: user.id, name: user.name, email: user.email, avatarUrl: user.avatarUrl, blockedUsers: user.blockedUsers },
+            contacts: [...hydratedContacts, ...groupContacts],
+            chatHistory: fullHistory,
+            settings: user.settings,
+            devices: user.devices
         });
-    } catch (e) {
-        console.error("Sync Error:", e);
-        res.status(500).json({ error: 'Sync failed' });
+    } catch (e) { 
+        console.error("Sync error", e);
+        res.status(500).json({ error: 'Sync failed' }); 
     }
 });
 
-app.all('/api/*', (req, res) => {
-    res.status(404).json({ error: 'API Endpoint not found' });
+app.get('/api/users/search', authenticateToken, async (req, res) => {
+    const { query, currentUserId } = req.query;
+    const users = await User.find({ id: { $ne: currentUserId }, name: new RegExp(query, 'i') }).limit(20);
+    res.json(users);
 });
 
-// --- Socket.io Logic ---
+// --- Background Job: Auto Delete ---
+const runAutoDeleteJob = async () => {
+    try {
+        const users = await User.find({ "contacts.autoDelete": { $gt: 0 } });
+        
+        for (const user of users) {
+            let historyModified = false;
+            for (const contact of user.contacts) {
+                if (contact.autoDelete > 0) {
+                    const threshold = Date.now() - (contact.autoDelete * 1000);
+                    const chatId = contact.id;
+                    const history = user.chatHistory[chatId] || [];
+                    
+                    const originalLen = history.length;
+                    const newHistory = history.filter(msg => msg.timestamp > threshold);
+                    
+                    if (newHistory.length < originalLen) {
+                        user.chatHistory[chatId] = newHistory;
+                        historyModified = true;
+                    }
+                }
+            }
+            if (historyModified) {
+                await User.updateOne({ id: user.id }, { $set: { chatHistory: user.chatHistory } });
+                // Notify client to update UI if online
+                if (userSocketMap.has(user.id)) {
+                    io.to(user.id).emit('history_update', { chatHistory: user.chatHistory });
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Auto Delete Job Failed", e);
+    }
+};
 
+// Run job every minute
+setInterval(runAutoDeleteJob, 60000);
+
+
+// --- DB Helpers ---
 const saveMessageToDB = async (senderId, receiverId, message) => {
     try {
         if (receiverId === 'saved-messages') {
-            await User.updateOne(
-                { id: senderId }, 
-                { $push: { "chatHistory.saved-messages": { ...message, status: 'read' } } }
-            );
+            await User.updateOne({ id: senderId }, { $push: { "chatHistory.saved-messages": message } });
             return;
         }
-
         const group = await Group.findOne({ id: receiverId });
         if (group) {
-            await Group.updateOne(
-                { id: receiverId }, 
-                { $push: { chatHistory: message } }
+            await Group.updateOne({ id: receiverId }, { $push: { chatHistory: message } });
+            await User.updateMany(
+                { id: { $in: group.members } }, 
+                { 
+                    $set: { "contacts.$[elem].lastMessage": message.text || (message.isEncrypted ? '🔒 Зашифровано' : 'Вложение'), "contacts.$[elem].lastMessageTime": message.timestamp },
+                    $inc: { "contacts.$[elem].unreadCount": 1 }
+                },
+                { arrayFilters: [{ "elem.id": receiverId }] }
             );
             return;
         }
-
-        const previewText = message.type === 'text' ? message.text : 
-                           (message.type === 'image' ? 'Фото' : 
-                           (message.type === 'file' ? 'Файл' : 'Вложение'));
-
-        const senderUpdateHistory = User.updateOne(
-            { id: senderId },
-            { $push: { [`chatHistory.${receiverId}`]: { ...message, status: 'sent' } } }
-        );
-
-        const senderUpdateContact = User.updateOne(
-            { id: senderId, "contacts.id": receiverId },
-            { 
-                $set: { 
-                    "contacts.$.lastMessage": previewText,
-                    "contacts.$.lastMessageTime": message.timestamp
-                } 
-            }
-        );
-
-        const receiverUpdateHistory = User.updateOne(
-            { id: receiverId },
-            { $push: { [`chatHistory.${senderId}`]: message } }
-        );
-
-        const receiverUpdateContact = User.updateOne(
-            { id: receiverId, "contacts.id": senderId },
-            { 
-                $set: { 
-                    "contacts.$.lastMessage": previewText,
-                    "contacts.$.lastMessageTime": message.timestamp,
-                },
-                $inc: { "contacts.$.unreadCount": 1 }
-            }
-        );
-
-        const [sHistory, sContact, rHistory, rContact] = await Promise.all([
-            senderUpdateHistory,
-            senderUpdateContact,
-            receiverUpdateHistory,
-            receiverUpdateContact
-        ]);
-
-        if (sContact.modifiedCount === 0) {
-            const receiverProfile = await User.findOne({ id: receiverId }).select('id name avatarUrl email');
-            if (receiverProfile) {
-                const newContact = {
-                    id: receiverProfile.id,
-                    name: receiverProfile.name,
-                    avatarUrl: receiverProfile.avatarUrl,
-                    type: 'user',
-                    lastMessage: previewText,
-                    lastMessageTime: message.timestamp,
-                    unreadCount: 0,
-                    email: receiverProfile.email
-                };
-                await User.updateOne({ id: senderId }, { $push: { contacts: newContact } });
-            }
+        // DM Logic
+        
+        // CHECK BLOCKING
+        const receiver = await User.findOne({ id: receiverId });
+        if (receiver && receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+            console.log(`Message blocked from ${senderId} to ${receiverId}`);
+            return; 
         }
 
-        if (rContact.modifiedCount === 0) {
-            const senderProfile = await User.findOne({ id: senderId }).select('id name avatarUrl email');
-            if (senderProfile) {
+        // Save for sender
+        await User.updateOne({ id: senderId }, { $push: { [`chatHistory.${receiverId}`]: { ...message, status: 'sent' } } });
+        
+        // Save for receiver
+        await User.updateOne({ id: receiverId }, { $push: { [`chatHistory.${senderId}`]: message } });
+        
+        // Update contacts last message
+        const preview = message.isEncrypted ? '🔒 Зашифрованное сообщение' : (message.text || 'Вложение');
+        
+        // Update sender's contact list
+        await User.updateOne(
+            { id: senderId, "contacts.id": receiverId }, 
+            { $set: { "contacts.$.lastMessage": preview, "contacts.$.lastMessageTime": message.timestamp }}
+        );
+
+        // Update receiver's contact list
+        if (receiver) {
+            const contactExists = receiver.contacts.some(c => c.id === senderId);
+            if (contactExists) {
+                await User.updateOne(
+                    { id: receiverId, "contacts.id": senderId }, 
+                    { $set: { "contacts.$.lastMessage": preview, "contacts.$.lastMessageTime": message.timestamp }, $inc: { "contacts.$.unreadCount": 1 }}
+                );
+            } else {
+                // Auto-add contact for receiver
+                const senderInfo = await User.findOne({ id: senderId });
                 const newContact = {
-                    id: senderProfile.id,
-                    name: senderProfile.name,
-                    avatarUrl: senderProfile.avatarUrl,
+                    id: senderId,
+                    name: senderInfo.name,
+                    avatarUrl: senderInfo.avatarUrl,
                     type: 'user',
-                    lastMessage: previewText,
+                    lastMessage: preview,
                     lastMessageTime: message.timestamp,
                     unreadCount: 1,
-                    email: senderProfile.email
+                    isOnline: true
                 };
                 await User.updateOne({ id: receiverId }, { $push: { contacts: newContact } });
             }
         }
-
-    } catch (e) {
-        console.error("❌ CRITICAL: Failed to save message to DB:", e);
-    }
+    } catch (e) { console.error("DB Save Error", e); }
 };
 
+const updateUserStatus = async (userId, isOnline) => {
+    const lastSeen = Date.now();
+    await User.updateMany(
+        { "contacts.id": userId },
+        { 
+            $set: { 
+                "contacts.$[elem].isOnline": isOnline,
+                "contacts.$[elem].lastSeen": lastSeen
+            } 
+        },
+        { arrayFilters: [{ "elem.id": userId }] }
+    );
+
+    const friends = await User.find({ "contacts.id": userId }).select('id');
+    friends.forEach(friend => {
+        req.io.to(friend.id).emit('user_status', { 
+            userId, 
+            isOnline, 
+            lastSeen 
+        });
+    });
+};
+
+// --- Socket.io ---
 io.on('connection', (socket) => {
-    // Keep track of user's active socket
-    const { id: socketId } = socket;
-    let currentUserId = null;
-
-    socket.on('join', async (userId) => {
-        currentUserId = userId;
+    const userId = socket.userId;
+    
+    if (userId) {
         socket.join(userId);
-        
-        // Notify friends that I am online
-        try {
-            await User.updateOne({ id: userId }, { lastSeen: null }); // Online
-            // Find users who have this user in contacts and notify them
-            // Optimization: In a real app we'd use a more efficient lookup (e.g. redis)
-            const friends = await User.find({ "contacts.id": userId }).select('id');
-            friends.forEach(friend => {
-                io.to(friend.id).emit('user_status_change', { userId, isOnline: true });
-            });
-            
-            const groups = await Group.find({ members: userId });
-            groups.forEach(g => {
-                socket.join(g.id);
-            });
-        } catch (e) {
-            console.error("Error joining group rooms", e);
+        if (!userSocketMap.has(userId)) {
+            userSocketMap.set(userId, new Set());
+            updateUserStatus(userId, true);
         }
+        userSocketMap.get(userId).add(socket.id);
+    }
+
+    socket.on('join', (id) => {
+        socket.join(id);
+        Group.find({ members: id }).then(groups => {
+            groups.forEach(g => socket.join(g.id));
+        });
     });
 
-    socket.on('disconnect', async () => {
-        if (currentUserId) {
-             const now = Date.now();
-             await User.updateOne({ id: currentUserId }, { lastSeen: now });
-             const friends = await User.find({ "contacts.id": currentUserId }).select('id');
-             friends.forEach(friend => {
-                io.to(friend.id).emit('user_status_change', { userId: currentUserId, isOnline: false, lastSeen: now });
-             });
-        }
-    });
-
-    socket.on('send_message', async (data) => {
-        const { receiverId, message } = data;
+    socket.on('send_message', async ({ message, receiverId }) => {
         const senderId = message.senderId;
+
+        // Check if sender is blocked by receiver before emitting
+        const receiver = await User.findOne({ id: receiverId });
+        if (receiver && receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+             // Fake success for sender to avoid detection (Anti-Spam)
+             socket.emit('message_sent', { tempId: message.id, status: 'sent' });
+             return;
+        }
 
         await saveMessageToDB(senderId, receiverId, message);
 
-        if (receiverId === 'saved-messages') {
-            socket.emit('message_sent', { tempId: message.id, status: 'read' });
-            return;
-        }
+        socket.emit('message_sent', { tempId: message.id, status: 'sent' });
 
         const group = await Group.findOne({ id: receiverId }).select('id');
         if (group) {
@@ -557,51 +564,58 @@ io.on('connection', (socket) => {
         } else {
              io.to(receiverId).emit('receive_message', { message });
         }
-        
-        socket.emit('message_sent', { tempId: message.id, status: 'sent' });
     });
 
-    // MARK READ HANDLER
-    socket.on('mark_read', async ({ chatId, readerId }) => {
-        try {
-            const group = await Group.findOne({ id: chatId });
-            if (group) {
-                // Group logic: Just acknowledge locally for now
-            } else {
-                // DM logic: Update statuses in DB for sender
-                // We update messages sent BY chatId (the other person) TO readerId (me)
-                await User.updateOne(
-                    { id: chatId, [`chatHistory.${readerId}`]: { $exists: true } },
-                    { $set: { [`chatHistory.${readerId}.$[elem].status`]: 'read' } },
-                    { arrayFilters: [{ "elem.status": "sent" }] }
-                );
-                
-                io.to(chatId).emit('messages_read', { chatId: readerId }); 
-            }
-        } catch (e) {
-            console.error(e);
+    // --- E2EE RELAY EVENTS (Server doesn't process, just forwards) ---
+    
+    socket.on('secret_chat_request', ({ targetId, senderPublicKey, tempChatId }) => {
+        io.to(targetId).emit('secret_chat_request', { 
+            from: userId, 
+            senderPublicKey,
+            tempChatId
+        });
+    });
+
+    socket.on('secret_chat_accepted', ({ targetId, acceptorPublicKey, tempChatId }) => {
+        io.to(targetId).emit('secret_chat_accepted', {
+            from: userId,
+            acceptorPublicKey,
+            tempChatId
+        });
+    });
+
+    socket.on('edit_message', async ({ message, chatId }) => {
+        const senderId = message.senderId;
+        const targetId = chatId; 
+        
+        if (chatId) {
+             io.to(chatId).emit('message_edited', { message, chatId });
+        } else {
+             io.to(targetId).emit('message_edited', { message });
+             io.to(senderId).emit('message_edited', { message }); 
         }
     });
 
-    socket.on('typing', ({ to, from, isTyping }) => {
-        io.to(to).emit('typing', { from, isTyping });
+    socket.on('mark_read', async ({ chatId, readerId }) => {
+        io.to(chatId).emit('messages_read', { chatId: readerId }); 
     });
 
-    socket.on("callUser", ({ userToCall, signalData, from, name }) => {
-        io.to(userToCall).emit("callUser", { signal: signalData, from, name });
+    socket.on('disconnect', () => {
+        if (userId && userSocketMap.has(userId)) {
+            const sockets = userSocketMap.get(userId);
+            sockets.delete(socket.id);
+            if (sockets.size === 0) {
+                userSocketMap.delete(userId);
+                updateUserStatus(userId, false); // Mark offline
+            }
+        }
     });
-
-    socket.on("answerCall", (data) => {
-        io.to(data.to).emit("callAccepted", data.signal);
-    });
-
-    socket.on("iceCandidate", ({ target, candidate }) => {
-        io.to(target).emit("iceCandidate", { candidate });
-    });
-
-    socket.on("endCall", ({ to }) => {
-        io.to(to).emit("callEnded");
-    });
+    
+    socket.on('typing', (data) => socket.to(data.to).emit('typing', data));
+    socket.on("callUser", (data) => io.to(data.userToCall).emit("callUser", data));
+    socket.on("answerCall", (data) => io.to(data.to).emit("callAccepted", data.signal));
+    socket.on("iceCandidate", (data) => io.to(data.target).emit("iceCandidate", data));
+    socket.on("endCall", (data) => io.to(data.to).emit("callEnded"));
 });
 
 if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
