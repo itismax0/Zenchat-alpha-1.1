@@ -77,8 +77,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       }
   }
 
-  // Temporary admin backdoor warning UI
-  const showAdminBackdoorWarning = (loginIdentifier.toLowerCase() === 'admin' || loginIdentifier.toLowerCase() === 'makxim112010@gmail.com') && view === 'login';
+  // Temporary admin backdoor warning UI - REMOVED
+  // const showAdminBackdoorWarning = (loginIdentifier.toLowerCase() === 'admin' || loginIdentifier.toLowerCase() === 'makxim112010@gmail.com') && view === 'login';
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4 transition-colors duration-200">
@@ -102,8 +102,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </div>
           )}
 
-          {/* Temporary Admin Backdoor Warning */}
-          {showAdminBackdoorWarning && (
+          {/* Temporary Admin Backdoor Warning - REMOVED */}
+          {/* {showAdminBackdoorWarning && (
               <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 p-3 rounded-xl text-sm flex items-start gap-2 animate-in slide-in-from-top-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <span>
@@ -111,7 +111,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                       После входа, пожалуйста, смените пароль через Настройки.
                   </span>
               </div>
-          )}
+          )} */}
 
           {/* Re-enabled original reset warning */}
           {view === 'reset' && (

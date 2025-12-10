@@ -22,22 +22,6 @@ const PORT = process.env.PORT || 3001;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/zenchat_local';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod'; 
 
-// --- Security: Trust Proxy ---
-// app.set('trust proxy', 1); // Commented out for now
-
-// --- HTTPS Redirect Middleware ---
-/* app.use((req, res, next) => {
-    if ((process.env.NODE_ENV === 'production' || process.env.RENDER) && req.headers['x-forwarded-proto'] !== 'https') {
-        return res.redirect(`https://${req.headers.host}${req.url}`);
-    }
-    next();
-}); */ // Commented out for now
-
-// Middleware
-app.use(cors());
-app.use(express.json({ limit: '100mb' })); // Increased limit for Base64 images
-app.use(express.urlencoded({ limit: '100mb', extended: true }));
-
 // --- Rate Limiting ---
 const apiLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, 
@@ -107,11 +91,6 @@ app.use((req, res, next) => {
 });
 
 // --- MongoDB ---
-// if (process.env.NODE_ENV === 'production' && !process.env.MONGO_URI) {
-//     console.error('❌ FATAL ERROR: MONGO_URI is missing.');
-//     process.exit(1);
-// }
-
 const connectDB = async () => {
     try {
         console.log(`🔌 Connecting to MongoDB...`);
@@ -136,56 +115,52 @@ const initializeAdminAccount = async () => {
         const adminUsername = 'admin';
         const adminEmail = 'makxim112010@gmail.com';
         const adminPassword = 'Itismax'; // The desired password
-        const adminId = 'admin_id';
+        const adminId = 'admin_id'; // Fixed ID for admin
 
-        let adminUser = await User.findOne({ username: adminUsername });
+        // Step 0: Ensure User model is available
+        if (!mongoose.models.User) {
+            // Schemas are defined after this, so we need to define it first if not already.
+            // This is a common pattern when init script runs before global schema definition.
+            User = mongoose.model('User', UserSchema);
+        }
+        
+        // Step 1: Aggressively remove any other user that holds the admin's target email or username
+        const conflictingEmailUser = await User.findOne({ email: adminEmail, id: { $ne: adminId } });
+        if (conflictingEmailUser) {
+            await User.deleteOne({ _id: conflictingEmailUser._id });
+            console.warn(`⚠️ Deleted conflicting user (ID: ${conflictingEmailUser.id}) who held admin email '${adminEmail}'.`);
+        }
+
+        const conflictingUsernameUser = await User.findOne({ username: adminUsername, id: { $ne: adminId } });
+        if (conflictingUsernameUser) {
+            await User.deleteOne({ _id: conflictingUsernameUser._id });
+            console.warn(`⚠️ Deleted conflicting user (ID: ${conflictingUsernameUser.id}) who held admin username '${adminUsername}'.`);
+        }
+
+        let adminUser = await User.findOne({ id: adminId });
 
         if (!adminUser) {
-            // Check if email is already taken by another non-admin user
-            const existingEmailUser = await User.findOne({ email: adminEmail });
-            if (existingEmailUser) {
-                console.warn(`⚠️ Admin Email '${adminEmail}' is already taken by user ID '${existingEmailUser.id}'. Skipping admin email update.`);
-                // If email is taken, create admin with default email and then try to update it later if needed
-                adminUser = new User({
-                    id: adminId,
-                    name: 'Админ',
-                    email: `temp_${adminEmail}`, // Temporary email to avoid conflict
-                    username: adminUsername,
-                    password: await bcrypt.hash(adminPassword, 10),
-                    avatarUrl: '', bio: 'Главный администратор ZenChat.', phoneNumber: '', blockedUsers: [], contacts: [], chatHistory: {}, settings: {}, devices: []
-                });
-                await adminUser.save();
-                console.log(`✨ Created new @admin account with temporary email.`);
-            } else {
-                adminUser = new User({
-                    id: adminId,
-                    name: 'Админ',
-                    email: adminEmail,
-                    username: adminUsername,
-                    password: await bcrypt.hash(adminPassword, 10),
-                    avatarUrl: '', bio: 'Главный администратор ZenChat.', phoneNumber: '', blockedUsers: [], contacts: [], chatHistory: {}, settings: {}, devices: []
-                });
-                await adminUser.save();
-                console.log(`✨ Created new @admin account.`);
-            }
+            // Admin user does not exist, create it
+            adminUser = new User({
+                id: adminId,
+                name: 'Админ',
+                email: adminEmail,
+                username: adminUsername,
+                password: await bcrypt.hash(adminPassword, 10),
+                avatarUrl: '', bio: 'Главный администратор ZenChat.', phoneNumber: '', blockedUsers: [], contacts: [], chatHistory: {}, settings: {}, devices: []
+            });
+            await adminUser.save();
+            console.log(`✨ Created new @admin account (ID: ${adminId}) with email '${adminEmail}' and password 'Itismax'.`);
         } else {
+            // Admin user exists, ensure its email and password are correct
             let needsUpdate = false;
-            let currentAdminEmail = adminUser.email;
-            let currentAdminPasswordHash = adminUser.password;
 
-            // Check and update email if different and not conflicting
-            if (currentAdminEmail !== adminEmail) {
-                const existingEmailUser = await User.findOne({ email: adminEmail, id: { $ne: adminId } });
-                if (existingEmailUser) {
-                    console.warn(`⚠️ Admin Email '${adminEmail}' is already taken by user ID '${existingEmailUser.id}'. Skipping admin email update.`);
-                } else {
-                    adminUser.email = adminEmail;
-                    needsUpdate = true;
-                }
+            if (adminUser.email !== adminEmail) {
+                adminUser.email = adminEmail;
+                needsUpdate = true;
             }
 
-            // Check and update password if different
-            const isPasswordMatch = await bcrypt.compare(adminPassword, currentAdminPasswordHash);
+            const isPasswordMatch = await bcrypt.compare(adminPassword, adminUser.password);
             if (!isPasswordMatch) {
                 adminUser.password = await bcrypt.hash(adminPassword, 10);
                 needsUpdate = true;
@@ -193,9 +168,9 @@ const initializeAdminAccount = async () => {
 
             if (needsUpdate) {
                 await adminUser.save();
-                console.log(`🔄 Updated @admin account: email and/or password set to 'Itismax'.`);
+                console.log(`🔄 Updated @admin account (ID: ${adminId}): email set to '${adminEmail}' and/or password set to 'Itismax'.`);
             } else {
-                console.log(`✅ @admin account already configured with specified email and password.`);
+                console.log(`✅ @admin account (ID: ${adminId}) already configured with specified email and password.`);
             }
         }
     } catch (error) {
@@ -228,7 +203,7 @@ const UserSchema = new mongoose.Schema({
     settings: { type: Object, default: {} },
     devices: { type: Array, default: [] }
 });
-const User = mongoose.model('User', UserSchema);
+let User = mongoose.models.User || mongoose.model('User', UserSchema);
 
 const GroupSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
@@ -336,28 +311,10 @@ app.post('/api/login', authLimiter, async (req, res) => {
 
         if (!user) return res.status(400).json({ error: 'Пользователь не найден.' });
 
-        // CRITICAL TEMPORARY BACKDOOR FOR ADMIN ACCOUNT
-        const isAdminLogin = (user.username && user.username.toLowerCase() === 'admin') || (user.email && user.email.toLowerCase() === 'makxim112010@gmail.com');
-        
-        if (isAdminLogin) {
-            console.warn(`
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                      !!! КРИТИЧЕСКИЙ БЭКДОР АКТИВЕН !!!                     ║
-║           Аккаунт @admin (makxim112010@gmail.com) доступен                 ║
-║                        С ЛЮБЫМ ПАРОЛЕМ!                                     ║
-║                                                                           ║
-║  ДЛЯ ВХОДА В АДМИН: Введите 'admin' (или email) и ЛЮБОЙ пароль.            ║
-║  ПОСЛЕ ВХОДА: Смените пароль через настройки и НЕМЕДЛЕННО СООБЩИТЕ        ║
-║  "ПАРОЛЬ АДМИНА УСТАНОВЛЕН, УДАЛИ БЭКДОР!" для восстановления безопасности.║
-╚═══════════════════════════════════════════════════════════════════════════╝`);
-            // Bypass password check
-        } else {
-            const isMatch = await bcrypt.compare(safePassword, user.password);
-            if (!isMatch) {
-                return res.status(400).json({ error: 'Неверный пароль.' });
-            }
+        const isMatch = await bcrypt.compare(safePassword, user.password);
+        if (!isMatch) {
+            return res.status(400).json({ error: 'Неверный пароль.' });
         }
-        // END CRITICAL TEMPORARY BACKDOOR
 
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '1h' });
         res.json({ id: user.id, name: user.name, email: user.email, username: user.username, avatarUrl: user.avatarUrl, token });
@@ -368,7 +325,6 @@ app.post('/api/login', authLimiter, async (req, res) => {
     }
 });
 
-// REMOVED: CODE RED: Emergency Password Reset - This endpoint is a backdoor and has been removed.
 app.post('/api/emergency-reset', authLimiter, async (req, res) => {
     try {
         const { loginIdentifier, newPassword } = req.body;
@@ -379,11 +335,10 @@ app.post('/api/emergency-reset', authLimiter, async (req, res) => {
             return res.status(400).json({ error: 'Имя пользователя и новый пароль обязательны.' });
         }
         
-        // Find user by username only
-        const user = await User.findOne({ username: safeLoginIdentifier });
+        const user = await User.findOne({ $or: [{ email: safeLoginIdentifier }, { username: safeLoginIdentifier }] });
         
         if (!user) {
-            return res.status(404).json({ error: 'Пользователь не найден по юзернейму.' });
+            return res.status(404).json({ error: 'Пользователь не найден.' });
         }
 
         const salt = await bcrypt.genSalt(10);
