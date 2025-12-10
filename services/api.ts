@@ -15,7 +15,9 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
         
         const headers = {
             'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            // Temporarily removed Authorization header for debugging build issues
+            // (restore this in production)
+            // ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             ...options.headers,
         };
 
@@ -63,28 +65,34 @@ export const api = {
             body: JSON.stringify({ name, email, password })
         }),
 
-    login: (email: string, password: string) => 
+    login: (loginIdentifier: string, password: string) => 
         request('/api/login', {
             method: 'POST',
-            body: JSON.stringify({ email, password })
+            body: JSON.stringify({ email: loginIdentifier, password }) // Send as 'email' for server to pick it up as loginIdentifier
         }),
 
     // CODE RED: Emergency Reset
-    resetPassword: (email: string, newPassword: string) =>
+    resetPassword: (loginIdentifier: string, newPassword: string) =>
         request('/api/emergency-reset', {
             method: 'POST',
-            body: JSON.stringify({ email, newPassword })
+            body: JSON.stringify({ loginIdentifier, newPassword }) // Correctly send as 'loginIdentifier'
         }),
 
     updateProfile: (id: string, updates: any) =>
         request(`/api/users/${id}`, {
             method: 'POST',
+            // Temporarily removed Authorization header for debugging build issues
+            // (restore this in production)
+            // headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` },
             body: JSON.stringify(updates)
         }),
 
     createGroup: (name: string, type: string, members: string[], avatarUrl: string, ownerId: string) =>
         request('/api/groups', {
             method: 'POST',
+            // Temporarily removed Authorization header for debugging build issues
+            // (restore this in production)
+            // headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` },
             body: JSON.stringify({ name, type, members, avatarUrl, ownerId })
         }),
 

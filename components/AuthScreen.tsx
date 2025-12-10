@@ -16,14 +16,14 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   
   // Form State
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState(''); // Changed from 'email' to 'loginIdentifier'
   const [password, setPassword] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
-    if (!email.trim() || !password) {
+    if (!loginIdentifier.trim() || !password) {
         setError('Заполните все поля');
         return;
     }
@@ -37,15 +37,16 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
     try {
         let profile: UserProfile;
-        const cleanEmail = email.trim();
+        const cleanLoginIdentifier = loginIdentifier.trim();
         
         if (view === 'login') {
-            profile = await db.login(cleanEmail, password);
+            profile = await db.login(cleanLoginIdentifier, password);
         } else if (view === 'register') {
-            profile = await db.register(name.trim(), cleanEmail, password);
+            // For registration, we still assume the loginIdentifier is an email
+            profile = await db.register(name.trim(), cleanLoginIdentifier, password);
         } else {
             // Reset
-            profile = await db.resetPassword(cleanEmail, password);
+            profile = await db.resetPassword(cleanLoginIdentifier, password);
         }
         
         onLoginSuccess(profile);
@@ -100,7 +101,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           {view === 'reset' && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 p-3 rounded-xl text-xs flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <span>Внимание: Это принудительно установит новый пароль для указанного Email. Используйте только если не можете войти.</span>
+                  <span>Внимание: Это принудительно установит новый пароль для указанного Email или юзернейма. Используйте только если не можете войти.</span>
               </div>
           )}
 
@@ -130,11 +131,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 <Mail size={18} className="text-gray-400" />
               </div>
               <input
-                type="text"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text" // Changed type to text to allow username
+                value={loginIdentifier}
+                onChange={(e) => setLoginIdentifier(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl text-slate-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                placeholder="Email или имя пользователя"
+                placeholder="Email или имя пользователя" // Updated placeholder
                 required
                 disabled={isLoading}
               />

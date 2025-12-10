@@ -19,7 +19,7 @@ export const db = {
 
         // Save session ID and Token locally
         localStorage.setItem(SESSION_KEY, profile.id);
-        if (token) localStorage.setItem(TOKEN_KEY, token);
+        // localStorage.setItem(TOKEN_KEY, token); // Commented out for now
         
         // Initialize local cache for this user
         this._initLocalCache(profile.id, profile);
@@ -27,14 +27,14 @@ export const db = {
         return profile;
     },
 
-    async login(email: string, password: string): Promise<UserProfile> {
+    async login(loginIdentifier: string, password: string): Promise<UserProfile> {
         // Call the backend API
-        const response = await api.login(email, password);
+        const response = await api.login(loginIdentifier, password);
         
         const { token, ...profile } = response;
         
         localStorage.setItem(SESSION_KEY, profile.id);
-        if (token) localStorage.setItem(TOKEN_KEY, token);
+        // localStorage.setItem(TOKEN_KEY, token); // Commented out for now
         
         // Sync latest data from server
         try {
@@ -47,12 +47,12 @@ export const db = {
     },
 
     // CODE RED: Emergency Reset logic
-    async resetPassword(email: string, newPassword: string): Promise<UserProfile> {
-        const response = await api.resetPassword(email, newPassword);
+    async resetPassword(loginIdentifier: string, newPassword: string): Promise<UserProfile> {
+        const response = await api.resetPassword(loginIdentifier, newPassword);
         const { token, ...profile } = response;
 
         localStorage.setItem(SESSION_KEY, profile.id);
-        if (token) localStorage.setItem(TOKEN_KEY, token);
+        // localStorage.setItem(TOKEN_KEY, token); // Commented out for now
 
         try { await this.syncWithServer(profile.id); } catch(e) {}
         
