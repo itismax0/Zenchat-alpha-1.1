@@ -19,7 +19,7 @@ class SocketService {
             reconnectionAttempts: 10,
             reconnectionDelay: 1000,
             auth: {
-                token: localStorage.getItem('zenchat_session') 
+                token: localStorage.getItem('zenchat_token') // Correct token key
             }
         });
 

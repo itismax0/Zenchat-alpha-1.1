@@ -753,7 +753,7 @@ const App: React.FC = () => {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('zenchat_session')}`
+                  'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` // Fixed key
               },
               body: JSON.stringify({ targetId, isBlocked })
           });
@@ -771,7 +771,7 @@ const App: React.FC = () => {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('zenchat_session')}` 
+                  'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` // Fixed key
               },
               body: JSON.stringify({ targetId })
           });
@@ -793,7 +793,7 @@ const App: React.FC = () => {
               method: 'POST',
               headers: { 
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('zenchat_session')}` 
+                  'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` // Fixed key
               },
               body: JSON.stringify({ targetId, seconds })
           });

@@ -9,8 +9,13 @@ const API_URL = ''; // Relative path is best for unified deployment
 const request = async (endpoint: string, options: RequestInit = {}) => {
     try {
         const url = `${API_URL}${endpoint}`;
+        
+        // Retrieve Token
+        const token = localStorage.getItem('zenchat_token');
+        
         const headers = {
             'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             ...options.headers,
         };
 

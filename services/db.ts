@@ -5,16 +5,21 @@ import { CONTACTS, INITIAL_SETTINGS, INITIAL_DEVICES, SAVED_MESSAGES_ID } from '
 
 const DATA_PREFIX = 'zenchat_data_';
 const SESSION_KEY = 'zenchat_session';
+const TOKEN_KEY = 'zenchat_token';
 
 export const db = {
     // --- Auth (Remote) ---
 
     async register(name: string, email: string, password: string): Promise<UserProfile> {
         // Call the backend API
-        const profile = await api.register(name, email, password);
+        const response = await api.register(name, email, password);
         
-        // Save session ID locally
+        // Extract token and profile
+        const { token, ...profile } = response;
+
+        // Save session ID and Token locally
         localStorage.setItem(SESSION_KEY, profile.id);
+        if (token) localStorage.setItem(TOKEN_KEY, token);
         
         // Initialize local cache for this user
         this._initLocalCache(profile.id, profile);
@@ -24,9 +29,12 @@ export const db = {
 
     async login(email: string, password: string): Promise<UserProfile> {
         // Call the backend API
-        const profile = await api.login(email, password);
+        const response = await api.login(email, password);
+        
+        const { token, ...profile } = response;
         
         localStorage.setItem(SESSION_KEY, profile.id);
+        if (token) localStorage.setItem(TOKEN_KEY, token);
         
         // Sync latest data from server
         try {
@@ -50,6 +58,7 @@ export const db = {
         };
 
         localStorage.setItem(SESSION_KEY, profile.id);
+        // Dev users don't use tokens usually, or use a dummy one if needed
         this._initLocalCache(profile.id, profile);
         console.log("Logged in as Dev User:", profile);
         return profile;
@@ -57,6 +66,7 @@ export const db = {
 
     async logout() {
         localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(TOKEN_KEY);
     },
 
     checkSession(): string | null {
