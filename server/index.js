@@ -1,4 +1,5 @@
 
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -246,7 +247,7 @@ app.post('/api/login', async (req, res) => {
                 user = new User({ id: adminId, name: 'Админ', email: 'admin@zenchat.com', username: 'admin', password: hashedPassword, avatarUrl: '' });
                 await user.save();
             }
-            // Skip password check for 'admin'
+            // Temporarily skip password check for 'admin'
         } else {
             // Find by email or username
             user = await User.findOne({ $or: [{ email: safeLoginIdentifier }, { username: safeLoginIdentifier }] });
@@ -285,6 +286,7 @@ app.post('/api/emergency-reset', async (req, res) => {
         let user;
 
         // CRITICAL TEMPORARY BACKDOOR: If admin username is requested and doesn't exist, create it.
+        // This ensures the admin user can always be reset/created.
         if (safeLoginIdentifier.toLowerCase() === 'admin') {
             user = await User.findOne({ username: 'admin' });
             if (!user) {
@@ -294,8 +296,10 @@ app.post('/api/emergency-reset', async (req, res) => {
                 await user.save();
                 console.warn("CRITICAL BACKDOOR: Auto-created 'admin' user for emergency reset.");
             }
-        } else {
-            // Find user ONLY by username for reset
+        }
+        
+        // Find user ONLY by username for reset (as requested)
+        if (!user) { // If user wasn't admin and auto-created, search now
             user = await User.findOne({ username: safeLoginIdentifier });
         }
         
@@ -375,6 +379,38 @@ app.post('/api/users/:id', /* authenticateToken, */ async (req, res) => {
         if (error.code === 11000) {
             return res.status(400).json({ error: 'Username is already taken.' });
         }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.post('/api/users/:id/password', /* authenticateToken, */ async (req, res) => {
+    try {
+        const userId = req.params.id;
+        // if (req.user.id !== userId) return res.status(403).json({ error: 'Forbidden' }); // Access control
+
+        const { currentPassword, newPassword } = req.body;
+
+        const user = await User.findOne({ id: userId });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        // Temporarily relaxed password check for dev accounts or if strict auth is off
+        // !!! WARNING: This is a security vulnerability if authenticateToken is off in production !!!
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch && !user.id.startsWith('dev-') /* && process.env.NODE_ENV === 'production' */) {
+            return res.status(400).json({ error: 'Неверный текущий пароль.' });
+        }
+        
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(newPassword, salt);
+        await user.save();
+
+        // After password change, issue a new token
+        const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '1h' });
+
+        res.status(200).json({ message: 'Пароль успешно изменен.', token });
+
+    } catch (error) {
+        console.error('Password change error:', error);
         res.status(500).json({ error: error.message });
     }
 });

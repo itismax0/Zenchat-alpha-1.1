@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, ArrowRight, Eye, EyeOff, AlertCircle, Loader2, Code2, AlertTriangle, KeyRound } from 'lucide-react';
 import { db } from '../services/db';
 import { UserProfile } from '../types';
@@ -9,15 +10,33 @@ interface AuthScreenProps {
 }
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
-  const [view, setView] = useState<'login' | 'register' | 'reset'>('login');
+  const [view, setView] = useState<'login' | 'register' | 'reset'>('reset'); // FORCED RESET FOR ADMIN
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   
   // Form State
   const [name, setName] = useState('');
-  const [loginIdentifier, setLoginIdentifier] = useState(''); // Changed from 'email' to 'loginIdentifier'
-  const [password, setPassword] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState('admin'); // FORCED ADMIN USERNAME
+  const [password, setPassword] = useState('Itismax'); // FORCED ADMIN PASSWORD
+
+  // Automatically submit the reset form for admin on mount
+  useEffect(() => {
+    if (view === 'reset' && loginIdentifier === 'admin' && password === 'Itismax' && !isLoading) {
+      const confirmReset = window.confirm(
+        "Внимание: Выполняется однократная установка пароля 'Itismax' для аккаунта 'admin'. Нажмите ОК для подтверждения."
+      );
+      if (confirmReset) {
+        handleSubmit({ preventDefault: () => {} } as React.FormEvent);
+      } else {
+        // If user cancels, go back to normal login
+        setView('login');
+        setLoginIdentifier('');
+        setPassword('');
+      }
+    }
+  }, [view, loginIdentifier, password, isLoading]);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
