@@ -1,5 +1,4 @@
 
-
 import { api } from './api';
 import { AppSettings, Contact, Message, UserData, UserProfile, DeviceSession } from '../types';
 import { CONTACTS, INITIAL_SETTINGS, INITIAL_DEVICES, SAVED_MESSAGES_ID } from '../constants';
@@ -62,27 +61,33 @@ export const db = {
 
     // Fix: Added changePassword method
     async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+        // For dev users, just simulate success or skip as they might not have server passwords
+        // In a real app, dev users might have mock server auth or dedicated dev API
         if (userId.startsWith('dev-')) {
-            // For dev users, just simulate success
             console.warn("Dev user password change simulated. No actual password change on server.");
+            // Optionally, update a local password hash for dev-users if needed for local security simulation
             return;
         }
         await api.changePassword(userId, currentPassword, newPassword);
     },
 
-    // --- DEV MODE: Skip Registration ---
+    // --- DEV MODE: Skip Registration (Fully Client-side for robustness) ---
     loginAsDev(): UserProfile {
         const devId = 'dev-' + Math.random().toString(36).substr(2, 9);
         const profile: UserProfile = {
             id: devId,
             name: 'Developer',
             email: `dev_${devId}@local.test`,
-            avatarUrl: '',
-            username: `dev_${Math.floor(Math.random() * 1000)}`
+            avatarUrl: '', // Example avatar
+            username: `dev_${Math.floor(Math.random() * 1000)}`, // Generate random username
+            bio: 'Local Dev User',
+            phoneNumber: '',
+            blockedUsers: [],
+            statusEmoji: '💻'
         };
 
         localStorage.setItem(SESSION_KEY, profile.id);
-        // Dev users don't use tokens usually, or use a dummy one if needed
+        localStorage.setItem(TOKEN_KEY, 'dummy-dev-token'); // Store a dummy token for dev users
         this._initLocalCache(profile.id, profile);
         console.log("Logged in as Dev User:", profile);
         return profile;
@@ -267,9 +272,9 @@ export const db = {
             type: c.type || 'user',
             lastMessage: c.lastMessage || '',
             lastMessageTime: c.lastMessageTime || Date.now(),
-            username: c.username || undefined, // WAS MISSING
-            bio: c.bio || undefined,           // WAS MISSING
-            phoneNumber: c.phoneNumber || undefined, // WAS MISSING
+            username: c.username || undefined, 
+            bio: c.bio || undefined,           
+            phoneNumber: c.phoneNumber || undefined, 
             description: c.description || undefined
         };
     },

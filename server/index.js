@@ -22,6 +22,11 @@ const PORT = process.env.PORT || 3001;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/zenchat_local';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod'; 
 
+// --- Middleware ---
+app.use(cors());
+app.use(express.json()); // CRITICAL FIX: To parse JSON request bodies
+app.use(express.urlencoded({ extended: true })); // For URL-encoded bodies
+
 // --- Rate Limiting ---
 const apiLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, 
@@ -48,10 +53,16 @@ const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
-    if (!token) return res.status(401).json({ error: 'Access denied' });
+    if (!token) {
+        console.log('DEBUG: Access denied - No token provided');
+        return res.status(401).json({ error: 'Access denied - No token provided' });
+    }
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.status(403).json({ error: 'Invalid token' });
+        if (err) {
+            console.log('DEBUG: Access denied - Invalid token', err.message);
+            return res.status(403).json({ error: `Access denied - Invalid token: ${err.message}` });
+        }
         req.user = user;
         next();
     });
@@ -125,16 +136,17 @@ const initializeAdminAccount = async () => {
         }
         
         // Step 1: Aggressively remove any other user that holds the admin's target email or username
-        const conflictingEmailUser = await User.findOne({ email: adminEmail, id: { $ne: adminId } });
-        if (conflictingEmailUser) {
-            await User.deleteOne({ _id: conflictingEmailUser._id });
-            console.warn(`⚠️ Deleted conflicting user (ID: ${conflictingEmailUser.id}) who held admin email '${adminEmail}'.`);
-        }
+        // if they are not the admin user itself
+        const conflictingUsers = await User.find({
+            $or: [{ email: adminEmail }, { username: adminUsername }],
+            id: { $ne: adminId } // Exclude the admin user itself
+        });
 
-        const conflictingUsernameUser = await User.findOne({ username: adminUsername, id: { $ne: adminId } });
-        if (conflictingUsernameUser) {
-            await User.deleteOne({ _id: conflictingUsernameUser._id });
-            console.warn(`⚠️ Deleted conflicting user (ID: ${conflictingUsernameUser.id}) who held admin username '${adminUsername}'.`);
+        if (conflictingUsers.length > 0) {
+            for (const conflictUser of conflictingUsers) {
+                await User.deleteOne({ _id: conflictUser._id });
+                console.warn(`⚠️ Deleted conflicting user (ID: ${conflictUser.id}, Email: ${conflictUser.email}, Username: ${conflictUser.username}) to free up credentials for @admin.`);
+            }
         }
 
         let adminUser = await User.findOne({ id: adminId });

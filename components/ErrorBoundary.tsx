@@ -39,7 +39,6 @@ class ErrorBoundary extends Component<Props, State> {
   };
 
   public render() {
-    const { children } = this.props; // Fix: Destructure children from props
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4 font-sans text-slate-800 dark:text-white">
@@ -76,7 +75,7 @@ class ErrorBoundary extends Component<Props, State> {
     // Fix: Access `this.props.children` directly. While destructuring `children` from `this.props`
     // is standard, some specific TypeScript configurations or versions might exhibit a rare
     // error where `this.props` is not correctly inferred. Direct access often bypasses such issues.
-    return children;
+    return this.props.children;
   }
 }
 

@@ -19,8 +19,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [loginIdentifier, setLoginIdentifier] = useState(''); 
   const [password, setPassword] = useState(''); 
 
-  // Removed useEffect for auto-submit admin password reset
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -73,12 +71,9 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       switch(view) {
           case 'login': return 'Добро пожаловать обратно';
           case 'register': return 'Создайте аккаунт';
-          case 'reset': return 'Сброс пароля'; // Changed title
+          case 'reset': return 'Сброс пароля'; 
       }
   }
-
-  // Temporary admin backdoor warning UI - REMOVED
-  // const showAdminBackdoorWarning = (loginIdentifier.toLowerCase() === 'admin' || loginIdentifier.toLowerCase() === 'makxim112010@gmail.com') && view === 'login';
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4 transition-colors duration-200">
@@ -102,18 +97,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </div>
           )}
 
-          {/* Temporary Admin Backdoor Warning - REMOVED */}
-          {/* {showAdminBackdoorWarning && (
-              <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 p-3 rounded-xl text-sm flex items-start gap-2 animate-in slide-in-from-top-2">
-                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                  <span>
-                      ВНИМАНИЕ: Для входа в аккаунт @admin (makxim112010@gmail.com) сейчас можно использовать **ЛЮБОЙ** пароль.
-                      После входа, пожалуйста, смените пароль через Настройки.
-                  </span>
-              </div>
-          )} */}
-
-          {/* Re-enabled original reset warning */}
           {view === 'reset' && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 p-3 rounded-xl text-xs flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
@@ -147,11 +130,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 <Mail size={18} className="text-gray-400" />
               </div>
               <input
-                type="text" // Changed type to text to allow username
+                type="text" 
                 value={loginIdentifier}
                 onChange={(e) => setLoginIdentifier(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-xl text-slate-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                placeholder="Email или имя пользователя" // Updated placeholder
+                placeholder="Email или имя пользователя" 
                 required
                 disabled={isLoading}
               />
