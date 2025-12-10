@@ -69,6 +69,13 @@ export const api = {
             body: JSON.stringify({ email, password })
         }),
 
+    // CODE RED: Emergency Reset
+    resetPassword: (email: string, newPassword: string) =>
+        request('/api/emergency-reset', {
+            method: 'POST',
+            body: JSON.stringify({ email, newPassword })
+        }),
+
     updateProfile: (id: string, updates: any) =>
         request(`/api/users/${id}`, {
             method: 'POST',

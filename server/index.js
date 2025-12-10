@@ -256,6 +256,35 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// --- EMERGENCY RESET (CODE RED FIX) ---
+// Allows resetting password without old password or email code.
+// WARNING: DEV ONLY.
+app.post('/api/emergency-reset', async (req, res) => {
+    try {
+        const { email, newPassword } = req.body;
+        const safeEmail = String(email);
+        
+        const user = await User.findOne({ email: safeEmail });
+        if (!user) return res.status(404).json({ error: 'Пользователь с таким Email не найден.' });
+
+        // Hash new password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(newPassword, salt);
+        
+        user.password = hashedPassword;
+        await user.save();
+
+        // Log them in immediately
+        const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+        const { password: _, _id, __v, ...userProfile } = user.toObject();
+        
+        res.json({ ...userProfile, token });
+    } catch (e) {
+        console.error("Emergency Reset Failed", e);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
+});
+
 // API Routes (Profile, Groups, Sync)
 app.post('/api/users/:id', authenticateToken, async (req, res) => {
     try {

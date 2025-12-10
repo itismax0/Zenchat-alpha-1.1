@@ -46,6 +46,19 @@ export const db = {
         return profile;
     },
 
+    // CODE RED: Emergency Reset logic
+    async resetPassword(email: string, newPassword: string): Promise<UserProfile> {
+        const response = await api.resetPassword(email, newPassword);
+        const { token, ...profile } = response;
+
+        localStorage.setItem(SESSION_KEY, profile.id);
+        if (token) localStorage.setItem(TOKEN_KEY, token);
+
+        try { await this.syncWithServer(profile.id); } catch(e) {}
+        
+        return profile;
+    },
+
     // --- DEV MODE: Skip Registration ---
     loginAsDev(): UserProfile {
         const devId = 'dev-' + Math.random().toString(36).substr(2, 9);
@@ -75,6 +88,7 @@ export const db = {
 
     clearAllData() {
         localStorage.clear();
+        window.location.reload();
     },
 
     // --- Data Management ---

@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Mail, Lock, User, ArrowRight, Eye, EyeOff, AlertCircle, Loader2, Code2 } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, Eye, EyeOff, AlertCircle, Loader2, Code2, AlertTriangle, KeyRound } from 'lucide-react';
 import { db } from '../services/db';
 import { UserProfile } from '../types';
 
@@ -9,7 +9,7 @@ interface AuthScreenProps {
 }
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
-  const [isLogin, setIsLogin] = useState(true);
+  const [view, setView] = useState<'login' | 'register' | 'reset'>('login');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -28,7 +28,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         return;
     }
 
-    if (!isLogin && !name.trim()) {
+    if (view === 'register' && !name.trim()) {
         setError('Введите ваше имя');
         return;
     }
@@ -39,19 +39,20 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         let profile: UserProfile;
         const cleanEmail = email.trim();
         
-        if (isLogin) {
+        if (view === 'login') {
             profile = await db.login(cleanEmail, password);
-        } else {
+        } else if (view === 'register') {
             profile = await db.register(name.trim(), cleanEmail, password);
+        } else {
+            // Reset
+            profile = await db.resetPassword(cleanEmail, password);
         }
         
-        // Successful login/register will switch screens, so we don't set loading to false here
-        // to avoid "update on unmounted component" warning.
         onLoginSuccess(profile);
     } catch (err: any) {
         console.error("Auth error:", err);
         setError(err.message || 'Произошла ошибка. Попробуйте еще раз.');
-        setIsLoading(false); // Only stop loading if there was an error
+        setIsLoading(false);
     }
   };
 
@@ -60,26 +61,34 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(profile);
   };
 
-  const toggleMode = () => {
-      setIsLogin(!isLogin);
-      setError('');
-      setPassword('');
+  const handleHardReset = () => {
+      if (confirm("Вы уверены? Это удалит все данные с этого устройства (но они останутся на сервере).")) {
+          db.clearAllData();
+      }
   };
+
+  const getTitle = () => {
+      switch(view) {
+          case 'login': return 'Добро пожаловать обратно';
+          case 'register': return 'Создайте аккаунт';
+          case 'reset': return 'Экстренный сброс';
+      }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4 transition-colors duration-200">
-      <div className="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden animate-modal">
+      <div className="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden animate-modal flex flex-col">
         
         {/* Header */}
         <div className="px-8 pt-8 pb-6 text-center">
           <h1 className="text-3xl font-bold text-slate-800 dark:text-white mb-2 tracking-tight">ZenChat</h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm">
-            {isLogin ? 'Добро пожаловать обратно' : 'Создайте аккаунт для общения'}
+            {getTitle()}
           </p>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="px-8 pb-8 space-y-5">
+        <form onSubmit={handleSubmit} className="px-8 pb-8 space-y-5 flex-1">
           
           {error && (
               <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-xl text-sm flex items-center gap-2 animate-in slide-in-from-top-2">
@@ -88,7 +97,14 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </div>
           )}
 
-          {!isLogin && (
+          {view === 'reset' && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 p-3 rounded-xl text-xs flex items-start gap-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <span>Внимание: Это принудительно установит новый пароль для указанного Email. Используйте только если не можете войти.</span>
+              </div>
+          )}
+
+          {view === 'register' && (
             <div className="space-y-1">
               <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Имя</label>
               <div className="relative">
@@ -126,10 +142,12 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Пароль</label>
+            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">
+                {view === 'reset' ? 'Новый пароль' : 'Пароль'}
+            </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Lock size={18} className="text-gray-400" />
+                {view === 'reset' ? <KeyRound size={18} className="text-gray-400" /> : <Lock size={18} className="text-gray-400" />}
               </div>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -157,23 +175,39 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             className={`w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3.5 rounded-xl shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2 transform active:scale-[0.98] transition-all ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
             {isLoading ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
-            <span>{isLogin ? 'Войти' : 'Зарегистрироваться'}</span>
+            <span>
+                {view === 'login' ? 'Войти' : (view === 'reset' ? 'Сменить пароль и войти' : 'Зарегистрироваться')}
+            </span>
           </button>
 
-          <div className="text-center pt-2">
-            <button
-              type="button"
-              onClick={toggleMode}
-              disabled={isLoading}
-              className="text-sm text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors font-medium"
-            >
-              {isLogin ? 'Нет аккаунта? Создать' : 'Уже есть аккаунт? Войти'}
-            </button>
+          <div className="flex justify-between pt-2">
+            {view === 'login' ? (
+                <>
+                    <button type="button" onClick={() => { setView('reset'); setError(''); }} className="text-sm text-gray-500 hover:text-blue-600 transition-colors">
+                        Забыли пароль?
+                    </button>
+                    <button type="button" onClick={() => { setView('register'); setError(''); }} className="text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors">
+                        Создать аккаунт
+                    </button>
+                </>
+            ) : (
+                <button type="button" onClick={() => { setView('login'); setError(''); }} className="w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors">
+                    Вернуться ко входу
+                </button>
+            )}
           </div>
 
         </form>
-
-        <div className="bg-gray-50 dark:bg-slate-900/50 p-4 border-t border-gray-100 dark:border-slate-700">
+        
+        <div className="bg-gray-50 dark:bg-slate-900/50 p-4 border-t border-gray-100 dark:border-slate-700 flex flex-col gap-2">
+            <button 
+                type="button" 
+                onClick={handleHardReset}
+                className="w-full flex items-center justify-center gap-2 text-xs text-red-400 hover:text-red-500 transition-colors uppercase tracking-wider font-semibold"
+            >
+                Проблемы со входом? Сбросить данные
+            </button>
+            
             <button 
                 type="button" 
                 onClick={handleDevLogin}
