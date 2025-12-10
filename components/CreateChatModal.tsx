@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Check, ChevronRight, ArrowLeft, Camera, Search, AtSign } from 'lucide-react';
 import { ContactType, Contact, UserProfile } from '../types';

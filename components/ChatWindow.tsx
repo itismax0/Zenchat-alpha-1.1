@@ -5,7 +5,7 @@ import { Send, Paperclip, Smile, MoreVertical, Phone, ArrowLeft, Image as ImageI
 import MessageBubble from './MessageBubble';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
-import EncryptionModal from './EncryptionModal';
+import { EncryptionModal } from './EncryptionModal';
 import SecurityInfoModal from './SecurityInfoModal';
 import MessageContextMenu from './MessageContextMenu';
 import { ForwardModal, DeleteModal, TranslationModal } from './ActionModals';
@@ -13,6 +13,7 @@ import { db } from '../services/db';
 import { geminiService } from '../services/geminiService';
 import { socketService } from '../services/socketService';
 import { SAVED_MESSAGES_ID } from '../constants';
+import { encryptionService } from '../services/encryptionService'; // Re-enabled
 
 interface ChatWindowProps {
   contact: Contact;

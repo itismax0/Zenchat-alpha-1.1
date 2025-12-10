@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, ArrowRight, Eye, EyeOff, AlertCircle, Loader2, Code2, AlertTriangle, KeyRound } from 'lucide-react';
 import { db } from '../services/db';
@@ -10,33 +8,17 @@ interface AuthScreenProps {
 }
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
-  const [view, setView] = useState<'login' | 'register' | 'reset'>('reset'); // FORCED RESET FOR ADMIN
+  const [view, setView] = useState<'login' | 'register' | 'reset'>('login'); // Reverted to login as default
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   
   // Form State
   const [name, setName] = useState('');
-  const [loginIdentifier, setLoginIdentifier] = useState('admin'); // FORCED ADMIN USERNAME
-  const [password, setPassword] = useState('Itismax'); // FORCED ADMIN PASSWORD
+  const [loginIdentifier, setLoginIdentifier] = useState(''); 
+  const [password, setPassword] = useState(''); 
 
-  // Automatically submit the reset form for admin on mount
-  useEffect(() => {
-    if (view === 'reset' && loginIdentifier === 'admin' && password === 'Itismax' && !isLoading) {
-      const confirmReset = window.confirm(
-        "Внимание: Выполняется однократная установка пароля 'Itismax' для аккаунта 'admin'. Нажмите ОК для подтверждения."
-      );
-      if (confirmReset) {
-        handleSubmit({ preventDefault: () => {} } as React.FormEvent);
-      } else {
-        // If user cancels, go back to normal login
-        setView('login');
-        setLoginIdentifier('');
-        setPassword('');
-      }
-    }
-  }, [view, loginIdentifier, password, isLoading]);
-
+  // Removed useEffect for auto-submit admin password reset
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +43,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         if (view === 'login') {
             profile = await db.login(cleanLoginIdentifier, password);
         } else if (view === 'register') {
-            // For registration, we still assume the loginIdentifier is an email
             profile = await db.register(name.trim(), cleanLoginIdentifier, password);
         } else {
             // Reset
@@ -91,7 +72,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       switch(view) {
           case 'login': return 'Добро пожаловать обратно';
           case 'register': return 'Создайте аккаунт';
-          case 'reset': return 'Экстренный сброс';
+          case 'reset': return 'Сброс пароля'; // Changed title
       }
   }
 
@@ -117,6 +98,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </div>
           )}
 
+          {/* Re-enabled original reset warning */}
           {view === 'reset' && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 p-3 rounded-xl text-xs flex items-start gap-2">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
@@ -203,15 +185,15 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           <div className="flex justify-between pt-2">
             {view === 'login' ? (
                 <>
-                    <button type="button" onClick={() => { setView('reset'); setError(''); }} className="text-sm text-gray-500 hover:text-blue-600 transition-colors">
+                    <button type="button" onClick={() => { setView('reset'); setError(''); setLoginIdentifier(''); setPassword(''); }} className="text-sm text-gray-500 hover:text-blue-600 transition-colors">
                         Забыли пароль?
                     </button>
-                    <button type="button" onClick={() => { setView('register'); setError(''); }} className="text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors">
+                    <button type="button" onClick={() => { setView('register'); setError(''); setLoginIdentifier(''); setPassword(''); setName(''); }} className="text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors">
                         Создать аккаунт
                     </button>
                 </>
             ) : (
-                <button type="button" onClick={() => { setView('login'); setError(''); }} className="w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors">
+                <button type="button" onClick={() => { setView('login'); setError(''); setLoginIdentifier(''); setPassword(''); setName(''); }} className="w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors">
                     Вернуться ко входу
                 </button>
             )}

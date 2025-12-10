@@ -446,6 +446,7 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// Fix: Implemented password change API route
 app.post('/api/users/:id/password', authenticateToken, async (req, res) => {
     try {
         const userId = req.params.id;

@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Contact, Message } from '../types';
 import Avatar from './Avatar';

@@ -1,15 +1,16 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Bell, Moon, Globe, Shield, Smartphone, ChevronRight, ArrowLeft, Camera, Trash2, Monitor, LogOut, User, AtSign, Fingerprint, Loader2, Save, Phone, Info, QrCode, Palette, Smile, Image as ImageIcon, MapPin, Calendar } from 'lucide-react';
+import { X, Bell, Moon, Globe, Shield, Smartphone, ChevronRight, ArrowLeft, Camera, Trash2, Monitor, LogOut, User, AtSign, Fingerprint, Loader2, Save, Phone, Info, QrCode, Palette, Smile, Image as ImageIcon, MapPin, Calendar, Lock, AlertCircle, Check } from 'lucide-react'; // Added Lock, AlertCircle, Check
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import { UserProfile, AppSettings, DeviceSession } from '../types';
+import { db } from '../services/db'; // Import db service for password change
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   userProfile: UserProfile;
-  onUpdateProfile: (profile: UserProfile) => Promise<void>;
+  onUpdateProfile: (profile: Partial<UserProfile>) => Promise<void>; // Partial for granular updates
   settings: AppSettings;
   onUpdateSettings: (settings: AppSettings) => void;
   devices: DeviceSession[];
@@ -18,7 +19,7 @@ interface SettingsModalProps {
   initialTab?: 'main' | 'appearance';
 }
 
-type SettingsView = 'main' | 'notifications' | 'privacy' | 'appearance' | 'devices' | 'edit_profile' | 'customize_profile';
+type SettingsView = 'main' | 'notifications' | 'privacy' | 'appearance' | 'devices' | 'edit_profile' | 'customize_profile' | 'change_password'; // Added change_password
 
 const PROFILE_COLORS = [
     { id: 'red', class: 'bg-gradient-to-br from-red-500 to-red-600' },
@@ -67,6 +68,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   
   const [showQr, setShowQr] = useState(false);
 
+  // Password Change State
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState(false);
+
   // Reset view on open
   useEffect(() => {
     if (isOpen) {
@@ -82,6 +91,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         setProfileBackgroundEmoji(userProfile.profileBackgroundEmoji || '');
         setSaveError('');
         setShowQr(false);
+
+        // Reset password fields
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmNewPassword('');
+        setPasswordChangeError('');
+        setPasswordChangeSuccess(false);
     }
   }, [isOpen, userProfile, initialTab]);
 
@@ -93,8 +109,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       const reader = new FileReader();
       reader.onload = async (ev) => {
         const newUrl = ev.target?.result as string;
-        // SECURITY: Only send avatarUrl, not full profile
-        await onUpdateProfile({ avatarUrl: newUrl } as any);
+        await onUpdateProfile({ avatarUrl: newUrl }); // Pass Partial<UserProfile>
       };
       reader.readAsDataURL(file);
     }
@@ -115,7 +130,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsSaving(true);
       setSaveError('');
       
-      const updates: any = {};
+      const updates: Partial<UserProfile> = {}; // Use Partial<UserProfile>
       
       updates.name = editName;
       updates.bio = editBio;
@@ -138,6 +153,45 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       } finally {
           setIsSaving(false);
       }
+  };
+
+  // Fix: Implemented db.changePassword
+  const handleChangePassword = async () => {
+    setPasswordChangeError('');
+    setPasswordChangeSuccess(false);
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+        setPasswordChangeError('Все поля обязательны.');
+        return;
+    }
+    if (newPassword !== confirmNewPassword) {
+        setPasswordChangeError('Новый пароль и подтверждение не совпадают.');
+        return;
+    }
+    if (newPassword.length < 6) {
+        setPasswordChangeError('Новый пароль должен быть не менее 6 символов.');
+        return;
+    }
+    if (newPassword === currentPassword) {
+        setPasswordChangeError('Новый пароль не может совпадать с текущим.');
+        return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+        await db.changePassword(userProfile.id, currentPassword, newPassword);
+        setPasswordChangeSuccess(true);
+        // Automatically logout user to force re-login with new password
+        setTimeout(() => {
+            onLogout();
+            onClose();
+        }, 1500); 
+    } catch (e: any) {
+        console.error("Password change error:", e);
+        setPasswordChangeError(e.message || 'Ошибка смены пароля.');
+    } finally {
+        setIsChangingPassword(false);
+    }
   };
 
   const updateNestedSetting = (category: 'notifications' | 'privacy' | 'appearance', key: string, value: any) => {
@@ -548,6 +602,83 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
         )}
 
+        {/* CHANGE PASSWORD VIEW */}
+        {view === 'change_password' && (
+            <div className="flex flex-col h-full animate-view-transition">
+                 {renderHeader('Сменить пароль', () => setView('privacy'))}
+                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {passwordChangeError && (
+                        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-lg text-sm text-center animate-fade-in flex items-center gap-2 justify-center">
+                            <AlertCircle size={18} />
+                            {passwordChangeError}
+                        </div>
+                    )}
+                    {passwordChangeSuccess && (
+                        <div className="bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 p-3 rounded-lg text-sm text-center animate-fade-in flex items-center gap-2 justify-center">
+                            <Check size={18} />
+                            Пароль успешно изменен! Вы будете перелогинены.
+                        </div>
+                    )}
+                    
+                    <div className="space-y-4">
+                        <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Текущий пароль</label>
+                            <div className="flex items-center bg-gray-50 dark:bg-slate-700 rounded-xl border border-gray-200 dark:border-slate-600 px-3 focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                                <Lock size={18} className="text-gray-400" />
+                                <input 
+                                    type="password" 
+                                    value={currentPassword}
+                                    onChange={(e) => setCurrentPassword(e.target.value)}
+                                    className="flex-1 bg-transparent border-none focus:ring-0 py-3 text-slate-800 dark:text-white pl-3 outline-none"
+                                    placeholder="Введите текущий пароль"
+                                    disabled={isChangingPassword}
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Новый пароль</label>
+                            <div className="flex items-center bg-gray-50 dark:bg-slate-700 rounded-xl border border-gray-200 dark:border-slate-600 px-3 focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                                <Lock size={18} className="text-gray-400" />
+                                <input 
+                                    type="password" 
+                                    value={newPassword}
+                                    onChange={(e) => setNewPassword(e.target.value)}
+                                    className="flex-1 bg-transparent border-none focus:ring-0 py-3 text-slate-800 dark:text-white pl-3 outline-none"
+                                    placeholder="Введите новый пароль"
+                                    disabled={isChangingPassword}
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-500 uppercase ml-1">Подтвердите новый пароль</label>
+                            <div className="flex items-center bg-gray-50 dark:bg-slate-700 rounded-xl border border-gray-200 dark:border-slate-600 px-3 focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                                <Lock size={18} className="text-gray-400" />
+                                <input 
+                                    type="password" 
+                                    value={confirmNewPassword}
+                                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                                    className="flex-1 bg-transparent border-none focus:ring-0 py-3 text-slate-800 dark:text-white pl-3 outline-none"
+                                    placeholder="Повторите новый пароль"
+                                    disabled={isChangingPassword}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="pt-4">
+                        <button 
+                            onClick={handleChangePassword}
+                            disabled={isChangingPassword || passwordChangeSuccess}
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition-colors disabled:opacity-70 btn-press shadow-lg shadow-blue-500/20"
+                        >
+                            {isChangingPassword ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
+                            Сохранить пароль
+                        </button>
+                    </div>
+                 </div>
+            </div>
+        )}
+
         {view === 'notifications' && (
             <div className="flex flex-col h-full animate-view-transition">
                 {renderHeader('Уведомления', () => setView('main'))}
@@ -579,6 +710,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                          <div className="bg-gray-50 dark:bg-slate-900/50 rounded-2xl overflow-hidden border border-gray-100 dark:border-slate-700">
                             {renderToggle('Код-пароль', settings.privacy.passcode, (v) => updateNestedSetting('privacy', 'passcode', v))}
                             {renderToggle('Двухэтапная аутентификация', settings.privacy.twoFactor, (v) => updateNestedSetting('privacy', 'twoFactor', v))}
+                            {renderMenuItem(<Lock size={20} className="text-blue-500" />, 'Сменить пароль', 'bg-blue-100 dark:bg-blue-900/20', () => setView('change_password'))} {/* Added change password option */}
                          </div>
                     </div>
                 </div>

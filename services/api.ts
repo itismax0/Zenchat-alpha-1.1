@@ -1,4 +1,3 @@
-
 // On Render, Frontend and Backend are on the same domain.
 // Use relative path '/api' so it works automatically.
 // For local dev, Vite proxy handles '/api' -> 'localhost:3001'
@@ -13,11 +12,10 @@ const request = async (endpoint: string, options: RequestInit = {}) => {
         // Retrieve Token
         const token = localStorage.getItem('zenchat_token');
         
+        // Fix: Re-enabled Authorization header
         const headers = {
             'Content-Type': 'application/json',
-            // Temporarily removed Authorization header for debugging build issues
-            // (restore this in production)
-            // ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             ...options.headers,
         };
 
@@ -68,37 +66,46 @@ export const api = {
     login: (loginIdentifier: string, password: string) => 
         request('/api/login', {
             method: 'POST',
-            body: JSON.stringify({ email: loginIdentifier, password }) // Send as 'email' for server to pick it up as loginIdentifier
+            body: JSON.stringify({ loginIdentifier, password }) // CRITICAL FIX: Send as 'loginIdentifier'
         }),
 
     // CODE RED: Emergency Reset
     resetPassword: (loginIdentifier: string, newPassword: string) =>
         request('/api/emergency-reset', {
             method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` }, // Authorization re-enabled here
             body: JSON.stringify({ loginIdentifier, newPassword }) // Correctly send as 'loginIdentifier'
         }),
 
     updateProfile: (id: string, updates: any) =>
         request(`/api/users/${id}`, {
             method: 'POST',
-            // Temporarily removed Authorization header for debugging build issues
-            // (restore this in production)
-            // headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` },
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` }, // Authorization re-enabled here
             body: JSON.stringify(updates)
+        }),
+
+    // Fix: Added changePassword API method
+    changePassword: (id: string, currentPassword: string, newPassword: string) =>
+        request(`/api/users/${id}/password`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` }, // Authorization re-enabled here
+            body: JSON.stringify({ currentPassword, newPassword })
         }),
 
     createGroup: (name: string, type: string, members: string[], avatarUrl: string, ownerId: string) =>
         request('/api/groups', {
             method: 'POST',
-            // Temporarily removed Authorization header for debugging build issues
-            // (restore this in production)
-            // headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` },
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` }, // Authorization re-enabled here
             body: JSON.stringify({ name, type, members, avatarUrl, ownerId })
         }),
 
     searchUsers: (query: string, currentUserId: string) =>
-        request(`/api/users/search?query=${encodeURIComponent(query)}&currentUserId=${currentUserId}`),
+        request(`/api/users/search?query=${encodeURIComponent(query)}&currentUserId=${currentUserId}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` }, // Authorization re-enabled here
+        }),
 
     syncData: (userId: string) =>
-        request(`/api/sync/${userId}`)
+        request(`/api/sync/${userId}`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('zenchat_token')}` }, // Authorization re-enabled here
+        })
 };

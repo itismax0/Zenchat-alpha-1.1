@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CURRENT_USER_ID, INITIAL_DEVICES, INITIAL_SETTINGS, CONTACTS, SAVED_MESSAGES_ID, SAVED_MESSAGES_CONTACT } from './constants';
 import { Message, Contact, MessageType, AppSettings, DeviceSession, ContactType, UserProfile, UserData } from './types';
@@ -36,8 +35,8 @@ declare global {
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isSecure, setIsSecure] = useState(false);
-  
+  const [isSecure, setIsSecure] = useState(false); // Re-enabled
+
   // Data State
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [chatHistory, setChatHistory] = useState<Record<string, Message[]>>({});
@@ -204,6 +203,7 @@ const App: React.FC = () => {
                 const sessionKey = await encryptionService.deriveSharedSessionKey(keys.privateKey, acceptorPublicKey);
                 encryptionService.storeSessionKeys(tempChatId, { keyPair: keys, sharedKey: sessionKey });
                 console.log("✅ Secret Chat Handshake Complete");
+                setIsSecure(true); // Re-enabled security status
                 
                 // Add system message
                 setChatHistory(prev => ({
@@ -846,7 +846,7 @@ const App: React.FC = () => {
   return (
     <div className="flex h-[100dvh] bg-gray-50 dark:bg-slate-900 overflow-hidden text-slate-900 dark:text-white font-inter safe-area-bottom">
       
-      {isSecure && (
+      {isSecure && ( // Re-enabled security status UI
           <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[200] bg-green-500 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 animate-in slide-in-from-top-5 fade-in duration-500">
               <ShieldCheck size={18} />
               <span className="text-sm font-medium">Защищенное соединение (AES-256)</span>

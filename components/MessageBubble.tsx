@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
 import { CURRENT_USER_ID } from '../constants';

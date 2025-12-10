@@ -1,4 +1,5 @@
 
+
 import { api } from './api';
 import { AppSettings, Contact, Message, UserData, UserProfile, DeviceSession } from '../types';
 import { CONTACTS, INITIAL_SETTINGS, INITIAL_DEVICES, SAVED_MESSAGES_ID } from '../constants';
@@ -19,7 +20,7 @@ export const db = {
 
         // Save session ID and Token locally
         localStorage.setItem(SESSION_KEY, profile.id);
-        // localStorage.setItem(TOKEN_KEY, token); // Commented out for now
+        localStorage.setItem(TOKEN_KEY, token); 
         
         // Initialize local cache for this user
         this._initLocalCache(profile.id, profile);
@@ -34,7 +35,7 @@ export const db = {
         const { token, ...profile } = response;
         
         localStorage.setItem(SESSION_KEY, profile.id);
-        // localStorage.setItem(TOKEN_KEY, token); // Commented out for now
+        localStorage.setItem(TOKEN_KEY, token); 
         
         // Sync latest data from server
         try {
@@ -52,11 +53,21 @@ export const db = {
         const { token, ...profile } = response;
 
         localStorage.setItem(SESSION_KEY, profile.id);
-        // localStorage.setItem(TOKEN_KEY, token); // Commented out for now
+        localStorage.setItem(TOKEN_KEY, token);
 
         try { await this.syncWithServer(profile.id); } catch(e) {}
         
         return profile;
+    },
+
+    // Fix: Added changePassword method
+    async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+        if (userId.startsWith('dev-')) {
+            // For dev users, just simulate success
+            console.warn("Dev user password change simulated. No actual password change on server.");
+            return;
+        }
+        await api.changePassword(userId, currentPassword, newPassword);
     },
 
     // --- DEV MODE: Skip Registration ---
