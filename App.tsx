@@ -592,10 +592,32 @@ const App: React.FC = () => {
       return await db.searchUsers(q, userProfile.id);
   }, [userProfile.id]);
 
+  // FIX: Properly copy all profile fields to the new contact
   const handleAddContact = (p: UserProfile) => { 
-      const newContact: Contact = { id: p.id, name: p.name, avatarUrl: p.avatarUrl, type: 'user', unreadCount:0, isOnline: false, lastMessageTime: Date.now() };
-      setContacts([newContact, ...contacts]); setActiveContactId(p.id); setIsMobileSidebarOpen(false);
+      const newContact: Contact = { 
+          id: p.id, 
+          name: p.name, 
+          avatarUrl: p.avatarUrl, 
+          type: 'user', 
+          unreadCount: 0, 
+          isOnline: false, 
+          lastMessageTime: Date.now(),
+          username: p.username, // CRITICAL FIX: Save username
+          bio: p.bio, // Save bio
+          phoneNumber: p.phoneNumber, // Save phone
+          address: p.address,
+          birthDate: p.birthDate,
+          statusEmoji: p.statusEmoji,
+          profileColor: p.profileColor,
+          profileBackgroundEmoji: p.profileBackgroundEmoji
+      };
+      const updatedContacts = [newContact, ...contacts];
+      setContacts(updatedContacts); 
+      persistState({ contacts: updatedContacts }); // IMPORTANT: Persist immediately
+      setActiveContactId(p.id); 
+      setIsMobileSidebarOpen(false);
   };
+
   const handleCreateChat = async (n: string, m: string[], a: string) => { 
       if (createChatType === 'user') return;
       await db.createGroup(n, createChatType, m, a, userProfile.id); setIsCreateChatOpen(false); 
@@ -658,7 +680,7 @@ const App: React.FC = () => {
       
       setChatHistory(prev => ({ ...prev, [activeContactId]: [...(prev[activeContactId]||[]), msg] }));
       
-      // CRITICAL FIX: Update contact list immediately for sender to prevent UI sync lag
+      // Update contact list immediately for sender
       setContacts(prev => {
           const existing = prev.find(c => c.id === activeContactId);
           const preview = type === 'text' ? text : (type === 'image' ? 'Фото' : 'Вложение');
@@ -669,7 +691,6 @@ const App: React.FC = () => {
                   lastMessage: preview,
                   lastMessageTime: Date.now()
               } : c);
-              // Sort by time descending
               return updated.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
           }
           return prev;
@@ -704,7 +725,6 @@ const App: React.FC = () => {
               
               setChatHistory(prev => {
                   const history = prev[activeContactId] || [];
-                  // FIX: Update existing message status instead of appending duplicate
                   const updatedHistory = history.map(m => 
                       m.id === msg.id ? { ...m, status: 'read' as const } : m
                   );
@@ -896,7 +916,6 @@ const App: React.FC = () => {
             onCreateSecretChat={handleCreateSecretChat}
             isBlocked={!!isBlocked}
             onDeleteMessage={(id, forEveryone) => {
-               // Client side handling if needed, mainly server handles it
                if (activeContactId) {
                    socketService.deleteMessage(id, activeContactId, forEveryone);
                }

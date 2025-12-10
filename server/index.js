@@ -214,6 +214,7 @@ app.post('/api/register', async (req, res) => {
         await newUser.save();
         const token = jwt.sign({ id: newUserId, email: safeEmail }, JWT_SECRET, { expiresIn: '7d' });
         const { password: _, _id, __v, ...userProfile } = newUser.toObject();
+        // Return profile WITH username
         res.json({ ...userProfile, token });
     } catch (e) {
         console.error("Register Error", e);
