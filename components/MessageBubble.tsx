@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
 import { CURRENT_USER_ID } from '../constants';
 import ReactMarkdown from 'react-markdown';
-import { FileText, Download, MapPin, Play, Pause, Check, CheckCheck, Clock, Pin, Edit2, Forward, User, UserPlus } from 'lucide-react';
+import { FileText, Download, MapPin, Play, Pause, Check, CheckCheck, Clock, Pin, Edit2, Forward, User, UserPlus, Lock } from 'lucide-react';
 import './MessageBubble.css';
 import Avatar from './Avatar';
 
@@ -24,7 +24,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   isSelected,
   onToggleSelect
 }) => {
-  // Use currentUserId if available, otherwise fallback to constant (for dev/local mode)
   const isMe = message.senderId === (currentUserId || CURRENT_USER_ID);
   
   const isSticker = message.type === 'sticker';
@@ -54,19 +53,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   useEffect(() => {
     if (isVoice && message.attachmentUrl) {
         audioRef.current = new Audio(message.attachmentUrl);
-        
         audioRef.current.addEventListener('ended', () => {
             setIsPlaying(false);
             setProgress(0);
         });
-
         audioRef.current.addEventListener('timeupdate', () => {
             if (audioRef.current) {
                 const percent = (audioRef.current.currentTime / audioRef.current.duration) * 100;
                 setProgress(percent || 0);
             }
         });
-
         return () => {
             if (audioRef.current) {
                 audioRef.current.pause();
@@ -78,15 +74,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
   const togglePlay = (e: React.MouseEvent) => {
       e.stopPropagation();
-      // Play sound effect for interaction
-      import('../services/soundService').then(({soundService}) => {
-          // A very quiet click or interaction sound could go here if desired
-      });
-
       if (audioRef.current) {
           if (isPlaying) {
               audioRef.current.pause();
           } else {
+              // Pause all other audio
+              document.querySelectorAll('audio').forEach(a => a !== audioRef.current && a.pause());
               audioRef.current.play();
           }
           setIsPlaying(!isPlaying);
@@ -105,39 +98,24 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
   const renderStatus = () => {
     if (!isMe) return null;
-    
-    // Telegram-style status icons
     const iconClass = "text-blue-100 dark:text-white/80"; 
     
     return (
       <span className="message-status flex items-center ml-1 h-3 self-end mb-0.5" title={message.status}>
         {message.isPinned && <Pin size={10} className="mr-1.5 text-slate-300 transform -rotate-45" fill="currentColor" />}
-        
-        {/* Case 1: Sending + Offline = Clock */}
-        {message.status === 'sending' && !isOnline && (
-             <Clock size={12} className={`${iconClass} opacity-70`} strokeWidth={2} />
-        )}
-        
-        {/* Case 2: Sending + Online = One Check (Optimistic) OR Sent = One Check */}
-        {((message.status === 'sending' && isOnline) || message.status === 'sent') && (
-             <Check size={16} className={iconClass} strokeWidth={2} />
-        )}
-        
-        {/* Case 3: Read = Two Checks */}
-        {message.status === 'read' && (
-             <CheckCheck size={16} className={iconClass} strokeWidth={2} />
-        )}
+        {message.status === 'sending' && !isOnline && <Clock size={12} className={`${iconClass} opacity-70`} strokeWidth={2} />}
+        {((message.status === 'sending' && isOnline) || message.status === 'sent') && <Check size={16} className={iconClass} strokeWidth={2} />}
+        {message.status === 'read' && <CheckCheck size={16} className={iconClass} strokeWidth={2} />}
       </span>
     );
   };
 
-  // --- Long Press Logic ---
   const handleTouchStart = (e: React.TouchEvent) => {
     if (isSelectionMode) return;
-    e.persist(); // Persist synthetic event
+    e.persist();
     longPressTimerRef.current = setTimeout(() => {
         onContextMenu(e, message);
-    }, 500); // 500ms long press
+    }, 500);
   };
 
   const handleTouchEnd = () => {
@@ -148,7 +126,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   };
 
   const handleTouchMove = () => {
-    // If user moves finger, cancel long press
     if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
@@ -158,9 +135,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isSelectionMode) {
-        onContextMenu(e, message);
-    }
+    if (!isSelectionMode) onContextMenu(e, message);
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -169,8 +144,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         onToggleSelect(message.id);
     }
   };
-
-  // --- Render ---
 
   if (isSticker && message.attachmentUrl) {
     return (
@@ -191,16 +164,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
            </div>
         )}
         <div className="relative max-w-[50%] transition-transform active:scale-95 duration-200">
-          <img 
-            src={message.attachmentUrl} 
-            alt="Sticker" 
-            className="w-32 h-32 object-contain drop-shadow-sm hover:scale-110 transition-transform duration-300" 
-          />
+          <img src={message.attachmentUrl} alt="Sticker" className="w-32 h-32 object-contain drop-shadow-sm hover:scale-110 transition-transform duration-300" />
            {/* Reactions for Sticker */}
            {message.reactions && message.reactions.length > 0 && (
                 <div className={`absolute -bottom-2 ${isMe ? 'right-0' : 'left-0'} flex flex-wrap gap-1 z-10`}>
                     {message.reactions.map((r, i) => (
-                        <span key={i} className="flex items-center gap-1 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-sm border border-black/5 dark:border-white/10 rounded-full px-1.5 py-0.5 text-xs transform hover:scale-110 transition-transform cursor-pointer animate-pop-in" style={{ animationDelay: `${i * 50}ms` }}>
+                        <span key={i} className="flex items-center gap-1 bg-white/90 dark:bg-slate-800/90 backdrop-blur-sm shadow-sm border border-black/5 dark:border-white/10 rounded-full px-1.5 py-0.5 text-xs">
                             <span>{r.emoji}</span>
                             {r.count > 1 && <span className="text-[10px] font-bold text-blue-500">{r.count}</span>}
                         </span>
@@ -235,10 +204,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
       )}
 
       <div
-        className={`max-w-[85%] lg:max-w-[65%] px-3 py-2 rounded-2xl shadow-sm relative text-sm md:text-base transition-all duration-200 ${
+        className={`max-w-[85%] lg:max-w-[65%] px-3 py-2 rounded-2xl shadow-sm relative text-sm md:text-[15px] leading-snug transition-all duration-200 ${
           isMe
-            ? 'bg-blue-500 text-white rounded-tr-sm dark:bg-blue-600'
-            : 'bg-white border border-gray-100 text-slate-800 rounded-tl-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white'
+            ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-tr-sm dark:from-blue-600 dark:to-blue-700'
+            : 'bg-white border border-gray-100/50 text-slate-800 rounded-tl-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white'
         } ${isImage ? 'p-1' : ''} ${message.reactions && message.reactions.length > 0 ? 'mb-4' : ''} hover:shadow-md`} 
       >
         {/* Forwarded Header */}
@@ -249,9 +218,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
              </div>
         )}
 
-        {/* Reply Context - Telegram Style */}
+        {/* Reply Context */}
         {message.replyTo && (
-            <div className={`mb-1.5 pl-2.5 border-l-[3px] ${isMe ? 'border-white/50' : 'border-blue-500'} rounded-[2px] cursor-pointer opacity-90 transition-opacity hover:opacity-100`}>
+            <div className={`mb-1.5 pl-2.5 border-l-[3px] ${isMe ? 'border-white/50' : 'border-blue-500'} rounded-[2px] cursor-pointer opacity-90 hover:opacity-100`}>
                 <p className={`text-xs font-semibold ${isMe ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`}>
                     {message.replyTo.senderName}
                 </p>
@@ -265,11 +234,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
         {isContact && message.contactInfo && (
             <div className="flex items-center gap-3 min-w-[200px] pb-1">
                 <div className="relative">
-                    <Avatar 
-                        src={message.contactInfo.avatarUrl} 
-                        alt={message.contactInfo.name} 
-                        size="md" 
-                    />
+                    <Avatar src={message.contactInfo.avatarUrl} alt={message.contactInfo.name} size="md" />
                 </div>
                 <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm truncate">{message.contactInfo.name}</p>
@@ -282,18 +247,19 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         {/* Image Attachment */}
         {isImage && message.attachmentUrl && (
-          <div className="mb-2 rounded-lg overflow-hidden relative group/image">
+          <div className="mb-2 rounded-xl overflow-hidden relative group/image">
              <img 
                src={message.attachmentUrl} 
                alt="Attachment" 
-               className="max-w-full h-auto max-h-72 object-cover rounded-lg cursor-pointer transition-transform duration-500 group-hover/image:scale-[1.02]" 
+               onLoad={() => { /* Handle load if needed */ }}
+               className="max-w-full h-auto max-h-[350px] object-cover rounded-xl cursor-pointer transition-transform duration-500 group-hover/image:scale-[1.02]" 
              />
           </div>
         )}
 
         {/* File Attachment */}
         {isFile && (
-          <div className={`flex items-center gap-3 p-2 rounded-lg mb-2 transition-colors ${isMe ? 'bg-white/10 hover:bg-white/20' : 'bg-slate-50 border border-slate-200 dark:bg-slate-600 dark:border-slate-500 hover:bg-slate-100'}`}>
+          <div className={`flex items-center gap-3 p-2 rounded-xl mb-2 transition-colors ${isMe ? 'bg-white/10 hover:bg-white/20' : 'bg-slate-50 border border-slate-200 dark:bg-slate-600 dark:border-slate-500 hover:bg-slate-100'}`}>
             <div className={`p-2 rounded-full ${isMe ? 'bg-white/20' : 'bg-white dark:bg-slate-500'}`}>
               <FileText size={24} className={isMe ? 'text-white' : 'text-blue-500 dark:text-white'} />
             </div>
@@ -312,11 +278,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             <div className={`flex items-center gap-3 p-1 min-w-[200px] ${isMe ? 'pr-2' : ''}`}>
                 <button 
                     onClick={togglePlay}
-                    className={`p-2.5 rounded-full flex-shrink-0 transition-all btn-press ${
-                        isMe 
-                        ? 'bg-white text-blue-500' 
-                        : 'bg-blue-100 text-blue-600 dark:bg-slate-600 dark:text-white'
-                    }`}
+                    className={`p-2.5 rounded-full flex-shrink-0 transition-all btn-press ${isMe ? 'bg-white text-blue-500' : 'bg-blue-100 text-blue-600 dark:bg-slate-600 dark:text-white'}`}
                 >
                     {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
                 </button>
@@ -337,25 +299,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             </div>
         )}
 
-        {/* Location Attachment */}
-        {isLocation && message.latitude && message.longitude && (
-            <div className="mb-2">
-                <a 
-                    href={`https://www.google.com/maps?q=${message.latitude},${message.longitude}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="block rounded-lg overflow-hidden relative group/map"
-                >
-                    <div className="h-32 w-full bg-slate-100 dark:bg-slate-600 flex items-center justify-center relative transition-transform duration-500 group-hover/map:scale-105">
-                        <MapPin size={32} className="text-red-500 relative z-10 animate-bounce" />
-                    </div>
-                    <div className={`p-2 text-xs font-medium ${isMe ? 'text-blue-100' : 'text-slate-500 dark:text-slate-300'}`}>
-                        Геолокация
-                    </div>
-                </a>
-            </div>
-        )}
-
         {/* Text Content */}
         {message.text && (
           <div className="markdown-content">
@@ -364,6 +307,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
             ) : (
               <ReactMarkdown 
                 components={{
+                  a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline" />,
                   p: ({node, ...props}) => <p className="mb-1 last:mb-0 whitespace-pre-wrap" {...props} />,
                   code: ({node, ...props}) => <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded text-pink-600 dark:text-pink-400 font-mono text-xs" {...props} />
                 }}
@@ -391,7 +335,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
           {renderStatus()}
         </div>
 
-        {/* Reactions Display */}
+        {/* Reactions */}
         {message.reactions && message.reactions.length > 0 && (
             <div 
                 className={`absolute -bottom-5 ${isMe ? 'right-0' : 'left-0'} flex flex-wrap gap-1 z-10 cursor-pointer`}
@@ -400,21 +344,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                 {message.reactions.map((r, i) => (
                     <span 
                         key={i} 
-                        className={`
-                            flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs shadow-sm border
-                            backdrop-blur-md transition-transform hover:scale-110 active:scale-95 animate-pop-in
-                            ${r.userReacted 
-                                ? 'bg-blue-100/90 dark:bg-blue-900/80 border-blue-200 dark:border-blue-700' 
-                                : 'bg-white/90 dark:bg-slate-800/90 border-gray-100 dark:border-slate-600'}
-                        `}
+                        className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs shadow-sm border backdrop-blur-md transition-transform hover:scale-110 active:scale-95 animate-pop-in ${r.userReacted ? 'bg-blue-100/90 dark:bg-blue-900/80 border-blue-200 dark:border-blue-700' : 'bg-white/90 dark:bg-slate-800/90 border-gray-100 dark:border-slate-600'}`}
                         style={{ animationDelay: `${i * 50}ms` }}
                     >
                         <span className="text-[14px] leading-none">{r.emoji}</span>
-                        {r.count > 1 && (
-                            <span className={`text-[10px] font-bold ${r.userReacted ? 'text-blue-600 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400'}`}>
-                                {r.count}
-                            </span>
-                        )}
+                        {r.count > 1 && <span className={`text-[10px] font-bold ${r.userReacted ? 'text-blue-600 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400'}`}>{r.count}</span>}
                     </span>
                 ))}
             </div>

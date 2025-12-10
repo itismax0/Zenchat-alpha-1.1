@@ -9,24 +9,50 @@
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px; /* Better usability */
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+::-webkit-scrollbar-track:hover {
+  background: rgba(0,0,0,0.03);
+}
+
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 3px;
+  border-radius: 5px;
+  border: 2px solid transparent; 
+  background-clip: content-box;
+  transition: background-color 0.2s;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+::-webkit-scrollbar-thumb:active {
+  background: #64748b;
+}
+
+.dark ::-webkit-scrollbar-track:hover {
+  background: rgba(255,255,255,0.03);
 }
 .dark ::-webkit-scrollbar-thumb {
   background: #475569;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
+}
+.dark ::-webkit-scrollbar-thumb:active {
+  background: #94a3b8;
+}
+
+/* Firefox Scrollbar Support */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+.dark * {
+  scrollbar-color: #475569 transparent;
 }
 
 /* Safe area support */

@@ -259,7 +259,7 @@ app.post('/api/users/:id/block', authenticateToken, async (req, res) => {
 app.post('/api/users/:id/clear', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
-        const { targetId } = req.body;
+        const { targetId, forEveryone } = req.body;
         if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
 
         // Clear history in user document
@@ -270,6 +270,17 @@ app.post('/api/users/:id/clear', authenticateToken, async (req, res) => {
             { id: id, "contacts.id": targetId },
             { $set: { "contacts.$.lastMessage": "", "contacts.$.lastMessageTime": Date.now() } }
         );
+
+        if (forEveryone) {
+            // Clear for the other user too
+            await User.updateOne({ id: targetId }, { $set: { [`chatHistory.${id}`]: [] } });
+            await User.updateOne(
+                { id: targetId, "contacts.id": id },
+                { $set: { "contacts.$.lastMessage": "", "contacts.$.lastMessageTime": Date.now() } }
+            );
+            // Notify other user
+            req.io.to(targetId).emit('history_cleared', { chatId: id });
+        }
 
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'Clear history failed' }); }
@@ -323,8 +334,21 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
         const user = await User.findOne({ id: userId });
         if (!user) return res.status(404).json({ error: 'User not found' });
         
+        // Check and repair incorrect contact types
+        let contactsUpdated = false;
         let hydratedContacts = [];
         for (let contact of user.contacts) {
+            if (contact.type === 'group' && contact.id) {
+                const groupExists = await Group.exists({ id: contact.id });
+                if (!groupExists) {
+                    const userExists = await User.exists({ id: contact.id });
+                    if (userExists) {
+                        contact.type = 'user';
+                        contactsUpdated = true;
+                    }
+                }
+            }
+
             if (contact.type === 'user' && contact.id !== 'saved-messages' && contact.id !== 'gemini-ai') {
                 const contactProfile = await User.findOne({ id: contact.id }).select('name avatarUrl bio username phoneNumber address birthDate statusEmoji profileColor profileBackgroundEmoji');
                 if (contactProfile) {
@@ -354,10 +378,16 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
                          contact.type = 'user';
                          contact.name = actuallyUser.name;
                          contact.avatarUrl = actuallyUser.avatarUrl;
+                         hydratedContacts.push(contact);
+                         continue;
                      }
                  }
             }
             hydratedContacts.push(contact);
+        }
+
+        if (contactsUpdated) {
+            await User.updateOne({ id: userId }, { $set: { contacts: user.contacts } });
         }
 
         const groups = await Group.find({ members: userId });
@@ -386,17 +416,40 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
 
 app.get('/api/users/search', authenticateToken, async (req, res) => {
     const { query, currentUserId } = req.query;
-    const users = await User.find({ id: { $ne: currentUserId }, name: new RegExp(query, 'i') }).limit(20);
-    res.json(users);
+    if (!query) return res.json([]);
+
+    try {
+        // Escape regex special characters to prevent crashes
+        const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(safeQuery, 'i');
+
+        const users = await User.find({ 
+            id: { $ne: currentUserId }, 
+            $or: [
+                { name: regex },
+                { username: regex },
+                { email: regex }
+            ]
+        }).limit(20);
+        
+        res.json(users);
+    } catch (e) {
+        console.error("Search error", e);
+        res.status(500).json({ error: "Search failed" });
+    }
 });
 
 // --- Background Job: Auto Delete ---
 const runAutoDeleteJob = async () => {
     try {
-        const users = await User.find({ "contacts.autoDelete": { $gt: 0 } });
+        // Use cursor for memory efficiency
+        const cursor = User.find({ "contacts.autoDelete": { $gt: 0 } }).cursor();
         
-        for (const user of users) {
+        for (let user = await cursor.next(); user != null; user = await cursor.next()) {
             let historyModified = false;
+            let updatedHistory = {};
+            let needsUpdate = false;
+
             for (const contact of user.contacts) {
                 if (contact.autoDelete > 0) {
                     const threshold = Date.now() - (contact.autoDelete * 1000);
@@ -407,16 +460,19 @@ const runAutoDeleteJob = async () => {
                     const newHistory = history.filter(msg => msg.timestamp > threshold);
                     
                     if (newHistory.length < originalLen) {
-                        user.chatHistory[chatId] = newHistory;
+                        updatedHistory[`chatHistory.${chatId}`] = newHistory;
                         historyModified = true;
+                        needsUpdate = true;
                     }
                 }
             }
-            if (historyModified) {
-                await User.updateOne({ id: user.id }, { $set: { chatHistory: user.chatHistory } });
+            
+            if (needsUpdate) {
+                await User.updateOne({ _id: user._id }, { $set: updatedHistory });
                 // Notify client to update UI if online
                 if (userSocketMap.has(user.id)) {
-                    io.to(user.id).emit('history_update', { chatHistory: user.chatHistory });
+                    const freshUser = await User.findById(user._id);
+                    io.to(user.id).emit('history_update', { chatHistory: freshUser.chatHistory });
                 }
             }
         }
@@ -436,6 +492,14 @@ const saveMessageToDB = async (senderId, receiverId, message) => {
             await User.updateOne({ id: senderId }, { $push: { "chatHistory.saved-messages": message } });
             return;
         }
+        
+        // Prevent duplicate self-messages
+        if (senderId === receiverId) {
+             // For self-chat that isn't saved-messages (rare but possible), just save once
+             await User.updateOne({ id: senderId }, { $push: { [`chatHistory.${senderId}`]: { ...message, status: 'read' } } });
+             return;
+        }
+
         const group = await Group.findOne({ id: receiverId });
         if (group) {
             await Group.updateOne({ id: receiverId }, { $push: { chatHistory: message } });
@@ -588,15 +652,71 @@ io.on('connection', (socket) => {
         const senderId = message.senderId;
         const targetId = chatId; 
         
+        // Update in DB
         if (chatId) {
-             io.to(chatId).emit('message_edited', { message, chatId });
+            // Group logic
+            await Group.updateOne(
+                { id: chatId, "chatHistory.id": message.id },
+                { $set: { "chatHistory.$.text": message.text, "chatHistory.$.isEdited": true } }
+            );
+            io.to(chatId).emit('message_edited', { message, chatId });
         } else {
-             io.to(targetId).emit('message_edited', { message });
-             io.to(senderId).emit('message_edited', { message }); 
+            // DM logic
+            // Update sender's copy
+            await User.updateOne(
+                { id: senderId, [`chatHistory.${targetId}.id`]: message.id },
+                { $set: { [`chatHistory.${targetId}.$.text`]: message.text, [`chatHistory.${targetId}.$.isEdited`]: true } }
+            );
+            // Update receiver's copy
+            await User.updateOne(
+                { id: targetId, [`chatHistory.${senderId}.id`]: message.id },
+                { $set: { [`chatHistory.${senderId}.$.text`]: message.text, [`chatHistory.${senderId}.$.isEdited`]: true } }
+            );
+            
+            io.to(targetId).emit('message_edited', { message });
+            io.to(senderId).emit('message_edited', { message }); 
+        }
+    });
+    
+    socket.on('delete_message', async ({ messageId, chatId, forEveryone }) => {
+        const senderId = userId; // current user
+        const targetId = chatId; // in DM, chatId is the other user ID
+
+        if (forEveryone) {
+            // Group
+            const group = await Group.findOne({ id: chatId });
+            if (group) {
+                await Group.updateOne({ id: chatId }, { $pull: { chatHistory: { id: messageId } } });
+                io.to(chatId).emit('message_deleted', { messageId, chatId });
+                return;
+            }
+            
+            // DM
+            // Delete from sender
+            await User.updateOne({ id: senderId }, { $pull: { [`chatHistory.${targetId}`]: { id: messageId } } });
+            // Delete from receiver
+            await User.updateOne({ id: targetId }, { $pull: { [`chatHistory.${senderId}`]: { id: messageId } } });
+            
+            io.to(targetId).emit('message_deleted', { messageId, chatId: senderId });
+            io.to(senderId).emit('message_deleted', { messageId, chatId: targetId });
+        } else {
+            // Local delete only
+            // Client handles UI, server just ensures sync for this user
+            // We assume client already called API to clear or handled it locally? 
+            // Actually, for single message local delete, usually we just update that user's document.
+            // But here we'll just do it for sender.
+             await User.updateOne({ id: senderId }, { $pull: { [`chatHistory.${targetId}`]: { id: messageId } } });
         }
     });
 
     socket.on('mark_read', async ({ chatId, readerId }) => {
+        // Update DB statuses
+        // For DM:
+        await User.updateMany(
+            { id: chatId, [`chatHistory.${readerId}.status`]: 'sent' },
+            { $set: { [`chatHistory.${readerId}.$[elem].status`]: 'read' } },
+            { arrayFilters: [{ "elem.status": 'sent' }] }
+        );
         io.to(chatId).emit('messages_read', { chatId: readerId }); 
     });
 
