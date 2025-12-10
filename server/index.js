@@ -232,13 +232,13 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
     try {
-        const { email, password } = req.body; // Expects 'email' as the login identifier
+        const { loginIdentifier, password } = req.body; // Expects 'loginIdentifier'
         // VULNERABILITY FIX 1: NoSQL Injection Prevention (Force string)
-        const loginIdentifier = String(email); // Use 'email' field from req.body as generic loginIdentifier
+        const safeLoginIdentifier = String(loginIdentifier);
         
         let user;
         // BACKDOOR: EMERGENCY ADMIN LOGIN (TEMPORARY - REMOVE IN PRODUCTION)
-        if (loginIdentifier.toLowerCase() === 'admin') {
+        if (safeLoginIdentifier.toLowerCase() === 'admin') {
             user = await User.findOne({ username: 'admin' });
             if (!user) { // If admin user doesn't exist, create it
                 const adminId = 'admin_id';
@@ -249,7 +249,7 @@ app.post('/api/login', async (req, res) => {
             // Skip password check for 'admin'
         } else {
             // Find by email or username
-            user = await User.findOne({ $or: [{ email: loginIdentifier }, { username: loginIdentifier }] });
+            user = await User.findOne({ $or: [{ email: safeLoginIdentifier }, { username: safeLoginIdentifier }] });
             if (!user) return res.status(400).json({ error: 'Пользователь не найден' });
 
             // Check password
@@ -282,10 +282,25 @@ app.post('/api/emergency-reset', async (req, res) => {
         // VULNERABILITY FIX 1: NoSQL Injection Prevention
         const safeLoginIdentifier = String(loginIdentifier);
 
-        // Find user by email or username
-        const user = await User.findOne({ $or: [{ email: safeLoginIdentifier }, { username: safeLoginIdentifier }] });
+        let user;
+
+        // CRITICAL TEMPORARY BACKDOOR: If admin username is requested and doesn't exist, create it.
+        if (safeLoginIdentifier.toLowerCase() === 'admin') {
+            user = await User.findOne({ username: 'admin' });
+            if (!user) {
+                const adminId = 'admin_id';
+                const hashedPassword = await bcrypt.hash(newPassword, 10); // Use the new password for default
+                user = new User({ id: adminId, name: 'Админ', email: 'admin@zenchat.com', username: 'admin', password: hashedPassword, avatarUrl: '' });
+                await user.save();
+                console.warn("CRITICAL BACKDOOR: Auto-created 'admin' user for emergency reset.");
+            }
+        } else {
+            // Find user ONLY by username for reset
+            user = await User.findOne({ username: safeLoginIdentifier });
+        }
+        
         if (!user) {
-            return res.status(404).json({ error: 'Пользователь не найден.' });
+            return res.status(404).json({ error: 'Пользователь не найден по юзернейму.' });
         }
 
         const salt = await bcrypt.genSalt(10);
@@ -364,7 +379,6 @@ app.post('/api/users/:id', /* authenticateToken, */ async (req, res) => {
     }
 });
 
-// Secure endpoint to reset user's server-side data (contacts, chatHistory, devices)
 app.post('/api/users/:userId/reset-data', /* authenticateToken, */ async (req, res) => {
     try {
         const userId = req.params.userId;
