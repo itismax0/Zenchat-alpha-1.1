@@ -8,7 +8,6 @@ interface ChatSessionKeys {
 
 class EncryptionService {
   // Map<ChatId, Keys> - Stores keys in memory for the current session
-  // In a real production app, these would be stored in IndexedDB securely
   private chatSessions: Map<string, ChatSessionKeys> = new Map();
   
   constructor() {}
@@ -60,12 +59,13 @@ class EncryptionService {
       }
   }
 
-  // --- 3. SESSION MANAGEMENT ---
+  // --- 3. SESSION MANAGEMENT & PERSISTENCE ---
 
   // Stores keys for a specific chat ID
   storeSessionKeys(chatId: string, keys: ChatSessionKeys) {
       const existing = this.chatSessions.get(chatId) || {};
       this.chatSessions.set(chatId, { ...existing, ...keys });
+      this.saveKeys(chatId); // Auto-save to storage
   }
 
   getSessionKey(chatId: string): CryptoKey | undefined {
@@ -76,9 +76,69 @@ class EncryptionService {
       return this.chatSessions.get(chatId)?.keyPair;
   }
 
+  // Helpers for Persistence (JWK)
+  private async serializeKey(key: CryptoKey): Promise<JsonWebKey> {
+      return await window.crypto.subtle.exportKey("jwk", key);
+  }
+
+  private async deserializeKey(jwk: JsonWebKey, algorithm: any, usages: KeyUsage[]): Promise<CryptoKey> {
+      return await window.crypto.subtle.importKey("jwk", jwk, algorithm, true, usages);
+  }
+
+  async saveKeys(chatId: string) {
+      const session = this.chatSessions.get(chatId);
+      if (!session) return;
+
+      const data: any = {};
+      try {
+        if (session.keyPair?.privateKey) data.privateKey = await this.serializeKey(session.keyPair.privateKey);
+        if (session.keyPair?.publicKey) data.publicKey = await this.serializeKey(session.keyPair.publicKey);
+        if (session.sharedKey) data.sharedKey = await this.serializeKey(session.sharedKey);
+
+        localStorage.setItem(`zenchat_keys_${chatId}`, JSON.stringify(data));
+      } catch (e) {
+          console.error("Failed to save keys", e);
+      }
+  }
+
+  async restoreKeys(chatId: string): Promise<boolean> {
+      if (this.chatSessions.has(chatId)) return true;
+
+      const raw = localStorage.getItem(`zenchat_keys_${chatId}`);
+      if (!raw) return false;
+
+      try {
+          const data = JSON.parse(raw);
+          const keys: ChatSessionKeys = {};
+          const ecdhAlgo = { name: "ECDH", namedCurve: "P-256" };
+          const aesAlgo = { name: "AES-GCM" };
+
+          if (data.privateKey && data.publicKey) {
+              keys.keyPair = {
+                  privateKey: await this.deserializeKey(data.privateKey, ecdhAlgo, ["deriveKey", "deriveBits"]),
+                  publicKey: await this.deserializeKey(data.publicKey, ecdhAlgo, [])
+              };
+          }
+          if (data.sharedKey) {
+              keys.sharedKey = await this.deserializeKey(data.sharedKey, aesAlgo, ["encrypt", "decrypt"]);
+          }
+
+          this.chatSessions.set(chatId, keys);
+          return true;
+      } catch (e) {
+          console.error(`Failed to restore keys for ${chatId}`, e);
+          return false;
+      }
+  }
+
   // --- 4. ENCRYPTION / DECRYPTION (AES-256-GCM) ---
 
   async encryptMessage(chatId: string, text: string): Promise<{ content: string; iv: string } | null> {
+      // Try to restore if missing (e.g. page refresh)
+      if (!this.getSessionKey(chatId)) {
+          await this.restoreKeys(chatId);
+      }
+
       const key = this.getSessionKey(chatId);
       if (!key) {
           console.error(`No encryption key found for chat ${chatId}`);
@@ -106,6 +166,11 @@ class EncryptionService {
   }
 
   async decryptMessage(chatId: string, encryptedBase64: string, ivBase64: string): Promise<string> {
+      // Try to restore if missing
+      if (!this.getSessionKey(chatId)) {
+          await this.restoreKeys(chatId);
+      }
+
       const key = this.getSessionKey(chatId);
       if (!key) return "🔒 Message cannot be decrypted (Key missing)";
 
@@ -187,12 +252,9 @@ class EncryptionService {
   
   // Handshake to server (Legacy/Transport Layer)
   async performHandshake(): Promise<void> {
-      // Keep existing transport layer handshake for non-E2EE chats
-      // ... implementation similar to before but keeping it minimal for this file context
       return Promise.resolve(); 
   }
   
-  // Encrypt payload for Transport Layer (Legacy)
   async encrypt(data: any): Promise<any> { return null; }
   async decrypt(data: any, iv: any): Promise<any> { return null; }
 }

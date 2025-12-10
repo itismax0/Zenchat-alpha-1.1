@@ -88,6 +88,17 @@ const App: React.FC = () => {
     settingsRef.current = settings;
   }, [userProfile, contacts, chatHistory, activeContactId, settings]);
 
+  // Keys Restoration Effect
+  useEffect(() => {
+      // Attempt to restore keys for any known secret chats from localStorage
+      // This prevents key loss on refresh
+      contacts.forEach(c => {
+          if (c.isSecret) {
+              encryptionService.restoreKeys(c.id);
+          }
+      });
+  }, [contacts]);
+
   // Unlock Audio
   useEffect(() => {
     const handleInteraction = () => {
@@ -180,7 +191,13 @@ const App: React.FC = () => {
         });
 
         socketService.onSecretChatAccepted(async ({ from, acceptorPublicKey, tempChatId }) => {
-            const keys = encryptionService.getLocalKeyPair(tempChatId);
+            // Try to retrieve keys. If missing (e.g. refresh), try restore.
+            let keys = encryptionService.getLocalKeyPair(tempChatId);
+            if (!keys) {
+                await encryptionService.restoreKeys(tempChatId);
+                keys = encryptionService.getLocalKeyPair(tempChatId);
+            }
+
             if (keys) {
                 // Finalize handshake: Derive Shared Key using my private + their public
                 const sessionKey = await encryptionService.deriveSharedSessionKey(keys.privateKey, acceptorPublicKey);
@@ -199,6 +216,8 @@ const App: React.FC = () => {
                         type: 'text'
                     }]
                 }));
+            } else {
+                console.error("Critical: Private key not found for handshake completion. Chat may need to be recreated.");
             }
         });
 
@@ -582,7 +601,7 @@ const App: React.FC = () => {
       
       // 1. Generate our keys
       const keyPair = await encryptionService.generateChatKeys();
-      // Store in memory (Pending acceptance)
+      // Store in memory AND persist
       encryptionService.storeSessionKeys(secretChatId, { keyPair });
       
       // 2. Export public key
@@ -635,8 +654,8 @@ const App: React.FC = () => {
           if (encrypted) {
               await socketService.sendMessage(msg, activeContactId, encrypted);
           } else {
-              console.error("Encryption failed, msg not sent");
-              // Update msg status to error locally
+              console.error("Encryption failed, msg not sent. Keys might be missing.");
+              // Optional: Trigger key recovery or alert user
           }
           return; 
       }

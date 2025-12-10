@@ -38,11 +38,28 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   // Safely filter local contacts ensuring they exist and have a name
   const safeContacts = Array.isArray(contacts) ? contacts : [];
+  
   const filteredContacts = safeContacts.filter((c) => {
     if (!c) return false;
-    const nameMatch = c.name?.toLowerCase?.()?.includes(searchTerm.toLowerCase());
-    const descMatch = c.type === 'user' && c.description?.toLowerCase?.()?.includes(searchTerm.toLowerCase());
-    return nameMatch || descMatch;
+    
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return true;
+
+    // 1. Name Match
+    if (c.name?.toLowerCase().includes(term)) return true;
+
+    // 2. Username Match (handle @ prefix if user typed it)
+    const cleanTerm = term.replace('@', '');
+    if (c.username?.toLowerCase().includes(cleanTerm)) return true;
+
+    // 3. Bio/Status/Description Match
+    if (c.bio?.toLowerCase().includes(term)) return true;
+    if (c.description?.toLowerCase().includes(term)) return true;
+
+    // 4. Phone Match
+    if (c.phoneNumber?.includes(term)) return true;
+
+    return false;
   });
 
   // Debounced Global Search
@@ -158,6 +175,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => {
               onSelectContact(contact.id);
               closeMobile();
+              setSearchTerm(''); // Clear search on select
             }}
             className={`
               flex items-center px-4 py-3 cursor-pointer contact-item
@@ -182,7 +200,17 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <div className="flex justify-between items-center">
                 <p className="text-sm text-gray-500 dark:text-gray-400 truncate pr-2 opacity-90">
-                    {contact.id === activeContactId && contact.type === 'user' && contact.id !== SAVED_MESSAGES_ID ? 'Черновик: ' : ''}{contact.lastMessage}
+                    {/* Show username or bio match context if name doesn't match but we are searching */}
+                    {searchTerm && !contact.name.toLowerCase().includes(searchTerm.toLowerCase()) ? (
+                       <span className="text-blue-500">
+                           {contact.username?.toLowerCase().includes(searchTerm.toLowerCase().replace('@','')) ? `@${contact.username}` : (contact.bio || contact.description)}
+                       </span>
+                    ) : (
+                       <>
+                        {contact.id === activeContactId && contact.type === 'user' && contact.id !== SAVED_MESSAGES_ID ? 'Черновик: ' : ''}
+                        {contact.lastMessage}
+                       </>
+                    )}
                 </p>
                 {contact.unreadCount > 0 && (
                   <span className="bg-blue-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center animate-bounce">
@@ -213,6 +241,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             onClick={() => {
                                 onAddContact(user);
                                 closeMobile();
+                                setSearchTerm('');
                             }}
                             className="flex items-center px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors contact-item"
                         >
