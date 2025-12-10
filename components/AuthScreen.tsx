@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, User, ArrowRight, Eye, EyeOff, AlertCircle, Loader2, Code2, AlertTriangle, KeyRound } from 'lucide-react';
 import { db } from '../services/db';
@@ -76,6 +77,9 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       }
   }
 
+  // Temporary admin backdoor warning UI
+  const showAdminBackdoorWarning = (loginIdentifier.toLowerCase() === 'admin' || loginIdentifier.toLowerCase() === 'makxim112010@gmail.com') && view === 'login';
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-900 flex flex-col items-center justify-center p-4 transition-colors duration-200">
       <div className="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-xl overflow-hidden animate-modal flex flex-col">
@@ -95,6 +99,17 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-3 rounded-xl text-sm flex items-center gap-2 animate-in slide-in-from-top-2">
                   <AlertCircle size={18} />
                   {error}
+              </div>
+          )}
+
+          {/* Temporary Admin Backdoor Warning */}
+          {showAdminBackdoorWarning && (
+              <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 p-3 rounded-xl text-sm flex items-start gap-2 animate-in slide-in-from-top-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <span>
+                      ВНИМАНИЕ: Для входа в аккаунт @admin (makxim112010@gmail.com) сейчас можно использовать **ЛЮБОЙ** пароль.
+                      После входа, пожалуйста, смените пароль через Настройки.
+                  </span>
               </div>
           )}
 

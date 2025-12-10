@@ -1,5 +1,4 @@
 
-
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -323,18 +322,42 @@ app.post('/api/login', authLimiter, async (req, res) => {
         const safeLoginIdentifier = String(loginIdentifier); // VULNERABILITY FIX 1
         const safePassword = String(password); // Ensure password is string for bcrypt
 
+        // Log received credentials for debugging
+        console.log(`DEBUG: Login attempt for loginIdentifier: '${safeLoginIdentifier}', password: '${safePassword}'`);
+
         if (!safeLoginIdentifier || !safePassword) {
             return res.status(400).json({ error: 'Email/имя пользователя и пароль обязательны.' });
         }
         
         let user = await User.findOne({ $or: [{ email: safeLoginIdentifier }, { username: safeLoginIdentifier }] });
+        
+        // Log user lookup result
+        console.log(`DEBUG: User lookup result: ${user ? 'Found' : 'Not Found'}`);
+
         if (!user) return res.status(400).json({ error: 'Пользователь не найден.' });
 
-        const isMatch = await bcrypt.compare(safePassword, user.password);
+        // CRITICAL TEMPORARY BACKDOOR FOR ADMIN ACCOUNT
+        const isAdminLogin = (user.username && user.username.toLowerCase() === 'admin') || (user.email && user.email.toLowerCase() === 'makxim112010@gmail.com');
         
-        // Strict password check for all accounts
-        if (!isMatch) return res.status(400).json({ error: 'Неверный пароль.' });
-        
+        if (isAdminLogin) {
+            console.warn(`
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                      !!! КРИТИЧЕСКИЙ БЭКДОР АКТИВЕН !!!                     ║
+║           Аккаунт @admin (makxim112010@gmail.com) доступен                 ║
+║                        С ЛЮБЫМ ПАРОЛЕМ!                                     ║
+║                                                                           ║
+║  ДЛЯ ВХОДА В АДМИН: Введите 'admin' (или email) и ЛЮБОЙ пароль.            ║
+║  ПОСЛЕ ВХОДА: Смените пароль через настройки и НЕМЕДЛЕННО СООБЩИТЕ        ║
+║  "ПАРОЛЬ АДМИНА УСТАНОВЛЕН, УДАЛИ БЭКДОР!" для восстановления безопасности.║
+╚═══════════════════════════════════════════════════════════════════════════╝`);
+            // Bypass password check
+        } else {
+            const isMatch = await bcrypt.compare(safePassword, user.password);
+            if (!isMatch) {
+                return res.status(400).json({ error: 'Неверный пароль.' });
+            }
+        }
+        // END CRITICAL TEMPORARY BACKDOOR
 
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '1h' });
         res.json({ id: user.id, name: user.name, email: user.email, username: user.username, avatarUrl: user.avatarUrl, token });
