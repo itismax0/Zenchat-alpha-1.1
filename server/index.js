@@ -419,8 +419,10 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
     if (!query) return res.json([]);
 
     try {
+        // Strip @ for username search
+        const cleanQuery = query.replace('@', '');
         // Escape regex special characters to prevent crashes
-        const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const safeQuery = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(safeQuery, 'i');
 
         const users = await User.find({ 

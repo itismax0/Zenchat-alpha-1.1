@@ -586,6 +586,7 @@ const App: React.FC = () => {
       setContacts([newContact, ...contacts]); setActiveContactId(p.id); setIsMobileSidebarOpen(false);
   };
   const handleCreateChat = async (n: string, m: string[], a: string) => { 
+      if (createChatType === 'user') return;
       await db.createGroup(n, createChatType, m, a, userProfile.id); setIsCreateChatOpen(false); 
   };
   const handleToggleMute = (cid: string) => { 
@@ -672,7 +673,18 @@ const App: React.FC = () => {
               const replyMsg: Message = {
                   id: Date.now().toString(), text: responseText, senderId: activeContactId, timestamp: Date.now(), status: 'read', type: 'text'
               };
-              setChatHistory(prev => ({ ...prev, [activeContactId]: [...prev[activeContactId], { ...msg, status: 'read' }, replyMsg] }));
+              
+              setChatHistory(prev => {
+                  const history = prev[activeContactId] || [];
+                  // FIX: Update existing message status instead of appending duplicate
+                  const updatedHistory = history.map(m => 
+                      m.id === msg.id ? { ...m, status: 'read' as const } : m
+                  );
+                  return { 
+                      ...prev, 
+                      [activeContactId]: [...updatedHistory, replyMsg] 
+                  };
+              });
           } catch(e) {
               console.error(e);
           }
@@ -855,6 +867,12 @@ const App: React.FC = () => {
             onChangeWallpaper={() => setShowWallpaperModal(true)}
             onCreateSecretChat={handleCreateSecretChat}
             isBlocked={!!isBlocked}
+            onDeleteMessage={(id, forEveryone) => {
+               // Client side handling if needed, mainly server handles it
+               if (activeContactId) {
+                   socketService.deleteMessage(id, activeContactId, forEveryone);
+               }
+            }}
           />
         ) : (
           <div className="hidden md:flex flex-1 items-center justify-center bg-[#f8fafc] dark:bg-slate-900 flex-col text-gray-400">

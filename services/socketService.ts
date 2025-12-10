@@ -79,6 +79,12 @@ class SocketService {
         }
     }
 
+    deleteMessage(messageId: string, chatId: string, forEveryone: boolean) {
+        if (this.socket) {
+            this.socket.emit('delete_message', { messageId, chatId, forEveryone });
+        }
+    }
+
     sendTyping(receiverId: string, isTyping: boolean) {
         if (this.socket) {
             this.socket.emit('typing', { to: receiverId, from: this.userId, isTyping });
