@@ -110,6 +110,9 @@ if (process.env.NODE_ENV === 'production' && !process.env.MONGO_URI) {
 const connectDB = async () => {
     try {
         console.log(`🔌 Connecting to MongoDB...`);
+        // Mask password in log
+        const maskedUri = MONGO_URI.replace(/mongodb(?:\+srv)?:\/\/([^:]+):([^@]+)@/, (match, p1, p2) => `mongodb+srv://${p1}:****@`);
+        console.log(`🔌 Attempting to connect to: ${maskedUri}`);
         await mongoose.connect(MONGO_URI, {
             serverSelectionTimeoutMS: 5000,
             autoIndex: process.env.NODE_ENV !== 'production',
@@ -175,11 +178,23 @@ app.post('/api/register', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, salt);
         const newUserId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
+        // Auto-generate unique username from email
+        let baseUsername = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+        if (baseUsername.length < 3) baseUsername = 'user' + Math.floor(Math.random() * 10000);
+        
+        let username = baseUsername;
+        let counter = 1;
+        while (await User.findOne({ username })) {
+            username = `${baseUsername}${counter}`;
+            counter++;
+        }
+
         const newUser = new User({
             id: newUserId,
             name,
             email,
             password: hashedPassword,
+            username: username, // Save the generated username
             avatarUrl: '',
         });
         await newUser.save();
@@ -187,7 +202,8 @@ app.post('/api/register', async (req, res) => {
         const { password: _, _id, __v, ...userProfile } = newUser.toObject();
         res.json({ ...userProfile, token });
     } catch (e) {
-        res.status(500).json({ error: e.code === 11000 ? 'Username/Email taken' : 'Error' });
+        console.error("Register Error", e);
+        res.status(500).json({ error: e.code === 11000 ? 'Username or Email already taken' : 'Error registering user' });
     }
 });
 
@@ -223,7 +239,11 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
         const { id } = req.params;
         if (req.user.id !== id) return res.status(403).json({ error: 'Forbidden' });
         const updates = req.body;
-        const user = await User.findOneAndUpdate({ id: id }, { $set: updates }, { new: true });
+        
+        // Ensure username is not cleared to null if it was set
+        if (updates.username === '') updates.username = null;
+
+        const user = await User.findOneAndUpdate({ id: id }, { $set: updates }, { new: true, runValidators: true });
         if (!user) return res.status(404).json({ error: 'User not found' });
         
         // Notify friends about profile update
@@ -233,7 +253,14 @@ app.post('/api/users/:id', authenticateToken, async (req, res) => {
         });
         const { password: _, _id, __v, ...userProfile } = user.toObject();
         res.json(userProfile);
-    } catch (e) { res.status(500).json({ error: 'Update failed' }); }
+    } catch (e) { 
+        // Handle Duplicate Key Error (Username taken)
+        if (e.code === 11000) {
+            return res.status(400).json({ error: 'Username is already taken' });
+        }
+        console.error("Update profile error:", e);
+        res.status(500).json({ error: 'Update failed' }); 
+    }
 });
 
 // --- NEW APIs: Block, Clear, AutoDelete ---
@@ -252,7 +279,7 @@ app.post('/api/users/:id/block', authenticateToken, async (req, res) => {
 
         const user = await User.findOneAndUpdate({ id }, updateOp, { new: true });
         res.json({ blockedUsers: user.blockedUsers });
-    } catch (e) { res.status(500).json({ error: 'Block failed' }); }
+    } catch (e) { console.error("Block failed", e); res.status(500).json({ error: 'Block failed' }); }
 });
 
 // Clear History
@@ -283,7 +310,7 @@ app.post('/api/users/:id/clear', authenticateToken, async (req, res) => {
         }
 
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'Clear history failed' }); }
+    } catch (e) { console.error("Clear history failed", e); res.status(500).json({ error: 'Clear history failed' }); }
 });
 
 // Set Auto Delete
@@ -308,7 +335,7 @@ app.post('/api/users/:id/autodelete', authenticateToken, async (req, res) => {
         req.io.to(targetId).emit('contact_update', { id: id, autoDelete: seconds });
 
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'Auto-delete set failed' }); }
+    } catch (e) { console.error("Auto-delete set failed", e); res.status(500).json({ error: 'Auto-delete set failed' }); }
 });
 
 
@@ -325,7 +352,7 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
             req.io.to(mid).emit('new_chat', { id: newGroup.id, name, type, avatarUrl });
         });
         res.json(newGroup);
-    } catch (e) { res.status(500).json({ error: 'Group creation failed' }); }
+    } catch (e) { console.error("Group creation failed", e); res.status(500).json({ error: 'Group creation failed' }); }
 });
 
 app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
@@ -350,6 +377,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
             }
 
             if (contact.type === 'user' && contact.id !== 'saved-messages' && contact.id !== 'gemini-ai') {
+                // Explicitly select username
                 const contactProfile = await User.findOne({ id: contact.id }).select('name avatarUrl bio username phoneNumber address birthDate statusEmoji profileColor profileBackgroundEmoji');
                 if (contactProfile) {
                     const isOnline = userSocketMap.has(contact.id);
@@ -358,7 +386,7 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
                         name: contactProfile.name,
                         avatarUrl: contactProfile.avatarUrl,
                         bio: contactProfile.bio,
-                        username: contactProfile.username,
+                        username: contactProfile.username, // Ensure username is pulled
                         phoneNumber: contactProfile.phoneNumber,
                         address: contactProfile.address,
                         birthDate: contactProfile.birthDate,
@@ -402,13 +430,13 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
         groups.forEach(g => { fullHistory[g.id] = g.chatHistory; });
 
         res.json({
-            profile: { id: user.id, name: user.name, email: user.email, avatarUrl: user.avatarUrl, blockedUsers: user.blockedUsers },
+            profile: { id: user.id, name: user.name, email: user.email, username: user.username, avatarUrl: user.avatarUrl, blockedUsers: user.blockedUsers },
             contacts: [...hydratedContacts, ...groupContacts],
             chatHistory: fullHistory,
             settings: user.settings,
             devices: user.devices
         });
-    } catch (e) { 
+    } catch (e) 
         console.error("Sync error", e);
         res.status(500).json({ error: 'Sync failed' }); 
     }
@@ -416,14 +444,21 @@ app.get('/api/sync/:userId', authenticateToken, async (req, res) => {
 
 app.get('/api/users/search', authenticateToken, async (req, res) => {
     const { query, currentUserId } = req.query;
-    if (!query) return res.json([]);
+    
+    // Safety check
+    if (!query || String(query).trim().length === 0) return res.json([]);
 
     try {
-        // Strip @ for username search
-        const cleanQuery = query.replace('@', '');
-        // Escape regex special characters to prevent crashes
+        // Strip ALL @ symbols (global match) to handle "@username" searches
+        const cleanQuery = String(query).replace(/@/g, '').trim();
+        
+        // Escape regex special characters
         const safeQuery = cleanQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // Case-insensitive regex
         const regex = new RegExp(safeQuery, 'i');
+
+        console.log(`Searching for: '${cleanQuery}' (Regex: ${regex}) for user ${currentUserId}`);
 
         const users = await User.find({ 
             id: { $ne: currentUserId }, 
@@ -432,8 +467,11 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
                 { username: regex },
                 { email: regex }
             ]
-        }).limit(20);
+        })
+        .select('id name username avatarUrl bio')
+        .limit(20);
         
+        console.log(`Found ${users.length} users:`, users.map(u => ({ id: u.id, name: u.name, username: u.username })));
         res.json(users);
     } catch (e) {
         console.error("Search error", e);
@@ -483,7 +521,6 @@ const runAutoDeleteJob = async () => {
     }
 };
 
-// Run job every minute
 setInterval(runAutoDeleteJob, 60000);
 
 
@@ -558,7 +595,8 @@ const saveMessageToDB = async (senderId, receiverId, message) => {
                     lastMessage: preview,
                     lastMessageTime: message.timestamp,
                     unreadCount: 1,
-                    isOnline: true
+                    isOnline: true,
+                    username: senderInfo.username // Propagate username to contact list
                 };
                 await User.updateOne({ id: receiverId }, { $push: { contacts: newContact } });
             }

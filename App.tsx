@@ -580,7 +580,10 @@ const App: React.FC = () => {
       try { const up = await db.updateProfile(userProfile.id, p); setUserProfile(up); } catch(e) { throw e; }
   };
   const handleTerminateSessions = () => { const nd = devices.filter(d => d.isCurrent); setDevices(nd); persistState({ devices: nd }); };
-  const handleSearchUsers = (q: string) => db.searchUsers(q, userProfile.id);
+  const handleSearchUsers = useCallback(async (q: string) => {
+      return await db.searchUsers(q, userProfile.id);
+  }, [userProfile.id]);
+
   const handleAddContact = (p: UserProfile) => { 
       const newContact: Contact = { id: p.id, name: p.name, avatarUrl: p.avatarUrl, type: 'user', unreadCount:0, isOnline: false, lastMessageTime: Date.now() };
       setContacts([newContact, ...contacts]); setActiveContactId(p.id); setIsMobileSidebarOpen(false);
@@ -619,10 +622,10 @@ const App: React.FC = () => {
           lastMessageTime: Date.now()
       };
 
-      setContacts([secretContact, ...contacts]);
+      setContacts(prev => [secretContact, ...prev]);
       setChatHistory(prev => ({ ...prev, [secretChatId]: [] }));
       setActiveContactId(secretChatId);
-      persistState({ contacts: [secretContact, ...contacts] });
+      persistState({ contacts: [secretContact, ...contactsRef.current] });
 
       // 4. Send Request via Socket
       socketService.requestSecretChat(targetId, myPublicKey, secretChatId);
